@@ -1,0 +1,73 @@
+// cerbero.json5 — config do agente Cerbero. Cole em <OPENCLAW_CONFIG_DIR>/openclaw.json
+// (o OpenClaw exige esse nome de arquivo dentro do container; "cerbero.json5" é só
+// o nome deste template no pacote. JSON5 aceita comentários, então dá pra manter
+// os comentários mesmo depois de copiado como openclaw.json).
+//
+// IMPORTANTE antes de usar:
+// 1) As chaves de API (ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, GEMINI_API_KEY) NÃO vão aqui.
+//    Elas vão no .env (veja .env.example) e são passadas como variável de ambiente do
+//    container. O OpenClaw lê essas env vars diretamente.
+// 2) Troque "+55SEUNUMERO" pelo seu número em E.164 (ex.: +5511999998888).
+// 3) Rode `.\cerbero-cli.ps1 models list --provider anthropic` (e `--provider google`,
+//    `--provider deepseek`) depois do primeiro start para confirmar os model refs exatos
+//    do catálogo instalado — os refs abaixo seguem a documentação atual, mas o catálogo
+//    pode variar por versão.
+
+{
+  gateway: {
+    mode: "local",
+    bind: "lan", // necessário pra Control UI em http://127.0.0.1:18789 funcionar via wslc -p
+    controlUi: {
+      allowedOrigins: ["http://localhost:18789", "http://127.0.0.1:18789"],
+    },
+  },
+
+  // WSLC/consomme ainda não relaia multicast/mDNS de forma confiável (sem suporte
+  // a Bonjour/SSDP/UPnP hoje). Desabilitamos para não ficar em crash-loop tentando.
+  // Ver: docs.openclaw.ai/gateway/bonjour
+  env: {
+    OPENCLAW_DISABLE_BONJOUR: "1",
+  },
+
+  agents: {
+    defaults: {
+      model: {
+        // Prioridade escolhida: DeepSeek V4 Flash como primario, Gemini Flash
+        // como 1o fallback, Claude Haiku 4.5 como 2o fallback. ATENCAO: nao
+        // existe "Gemini 3.5 Flash" no catalogo atual do OpenClaw (vai ate
+        // 3 / 3.1) - usamos google/gemini-3-flash-preview no lugar. O ref do
+        // Haiku 4.5 (anthropic/claude-haiku-4-5) ainda nao foi confirmado
+        // contra o catalogo instalado - rode
+        // `.\cerbero-cli.ps1 models list --all --provider anthropic` e ajuste
+        // se o nome exato for diferente.
+        primary: "deepseek/deepseek-v4-flash",
+        fallbacks: [
+          "google/gemini-3-flash-preview",
+          "anthropic/claude-haiku-4-5",
+        ],
+      },
+    },
+  },
+
+  // Provedores de modelo — auth por API key (lida de env: ANTHROPIC_API_KEY,
+  // DEEPSEEK_API_KEY, GEMINI_API_KEY/GOOGLE_API_KEY). Nada de segredo aqui.
+  models: {
+    providers: {
+      anthropic: {},
+      deepseek: {},
+      google: {},
+    },
+  },
+
+  channels: {
+    whatsapp: {
+      // Cenário: número pessoal (o mesmo que você já usa no celular).
+      dmPolicy: "allowlist",
+      allowFrom: ["+55SEUNUMERO"],
+      selfChatMode: true,
+      groupPolicy: "disabled", // comece travado; libere depois se quiser grupos
+      sendReadReceipts: true,
+      reactionLevel: "minimal",
+    },
+  },
+}

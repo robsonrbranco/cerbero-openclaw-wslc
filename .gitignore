@@ -1,0 +1,12 @@
+# Segredos reais - nunca commitar (fiquem só em .env.example com placeholders)
+.env
+*.env
+!.env.example
+
+# Backups locais de scripts (podem conter valores hardcoded de sessões de debug)
+*-bkp.ps1
+*.bak
+
+# Cruft de SO
+.DS_Store
+Thumbs.db
