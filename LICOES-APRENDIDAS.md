@@ -239,6 +239,41 @@ precisar escanear o QR de novo).
   volumes, pasta de dados, scripts) — evita colisão com outros
   containers/projetos WSLC no mesmo host.
 
+## 10. Bugs conhecidos do próprio OpenClaw (não da nossa infra)
+
+Nem todo erro que aparece é culpa do WSLC/virtiofs/PowerShell — o OpenClaw em
+si (versão 2026.6.11) tem bugs upstream ativos. Vale distinguir antes de sair
+reinvestigando a infra do zero.
+
+### `Error: reply session initialization conflicted for agent:main:main`
+
+Aparece esporadicamente ao conversar pelo WhatsApp (ou qualquer canal).
+**Causa**: condição de corrida dentro do próprio OpenClaw — o
+`replyResolver` tenta iniciar um novo turno de conversa mas colide com o
+estado `running` que ficou preso do turno anterior (duas escritas
+concorrentes na mesma entrada de sessão: persistência do transcript +
+metadados do runner). Não é causado pela nossa config, pelos volumes
+nomeados nem pelo bind mount — é bug de sessão do core, com múltiplos issues
+abertos cobrindo webchat, Telegram, Signal e Discord além do WhatsApp:
+[#98220](https://github.com/openclaw/openclaw/issues/98220),
+[#98741](https://github.com/openclaw/openclaw/issues/98741),
+[#100173](https://github.com/openclaw/openclaw/issues/100173),
+[#101250](https://github.com/openclaw/openclaw/issues/101250).
+
+O time do OpenClaw já está corrigindo com retry/backoff, portado pra
+Slack/Telegram — não confirmado ainda pro WhatsApp na 2026.6.11.
+
+**O que fazer quando acontecer:**
+
+1. Reenviar a mesma mensagem depois de uns segundos - na maioria dos casos é
+   só timing, resolve sozinho.
+2. Se a mesma conversa continuar travada, `wslc container stop cerbero-gateway`
+   + `start` limpa o estado `running` preso em memória (sem precisar
+   rebuildar imagem/volumes).
+3. Rodar `.\setup-cerbero-wslc.ps1` de vez em quando pega a imagem mais
+   recente do `ghcr.io/openclaw/openclaw:latest`, que deve eventualmente
+   incluir a correção pro WhatsApp também.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
@@ -249,3 +284,8 @@ precisar escanear o QR de novo).
   Fable 5, contexto 1M.
 - `docs.openclaw.ai/providers/google` — auth, refs de modelo, capacidades.
 - `docs.openclaw.ai/providers/models` — quickstart genérico de provider.
+- [github.com/openclaw/openclaw#98220](https://github.com/openclaw/openclaw/issues/98220),
+  [#98741](https://github.com/openclaw/openclaw/issues/98741),
+  [#100173](https://github.com/openclaw/openclaw/issues/100173),
+  [#101250](https://github.com/openclaw/openclaw/issues/101250) — bug
+  upstream "reply session initialization conflicted".
