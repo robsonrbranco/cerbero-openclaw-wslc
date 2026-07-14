@@ -17,12 +17,22 @@ param(
   [string]$LogPath       = "C:\wslc\projects\cerbero\logs\watchdog.log",
   [string]$StatePath     = "C:\wslc\projects\cerbero\logs\watchdog-state.json",
   [int]$MaxRestarts      = 3,    # restarts permitidos...
-  [int]$WindowMinutes    = 30    # ...dentro desta janela, antes de parar e so alertar
+  [int]$WindowMinutes    = 30,   # ...dentro desta janela, antes de parar e so alertar
+  [int]$StartAttempts    = 3,    # tentativas de 'wslc container start' por episodio
+  [int]$RetryDelaySec    = 10    # espera entre tentativas (cobre a janela em que o
+                                  # wslc recria o container - ID muda a cada reload de
+                                  # config - e 'start' pode nao achar nada por 1-2 tentativas)
 )
+
+# Sem isso, a saida do wslc.exe (que fala UTF-8) chega mangled no log
+# ("Contêiner" virava "Cont+ñiner") porque o console do PowerShell 5.1 no
+# Windows normalmente usa a codepage OEM, nao UTF-8.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 
 function Write-Log([string]$msg) {
   $line = "{0:yyyy-MM-dd HH:mm:ss} $msg" -f (Get-Date)
-  Add-Content -Path $LogPath -Value $line
+  Add-Content -Path $LogPath -Value $line -Encoding UTF8
 }
 
 New-Item -ItemType Directory -Force -Path (Split-Path $LogPath) | Out-Null
@@ -61,10 +71,29 @@ if ($recent.Count -ge $MaxRestarts) {
   exit 1
 }
 
-# --- restart ---
-Write-Log "Reiniciando container '$ContainerName'..."
-$out = & wslc container start $ContainerName 2>&1
-$out | ForEach-Object { Write-Log "  $_" }
+# --- restart, com retry (cobre a janela de recriacao do container: o wslc
+# troca o ID do container a cada reload de config, entao 'start' pode falhar
+# com WSLC_E_CONTAINER_NOT_FOUND por 1-2 tentativas ate o novo existir) ---
+$started = $false
+for ($i = 1; $i -le $StartAttempts; $i++) {
+  Write-Log "Reiniciando container '$ContainerName' (tentativa $i/$StartAttempts)..."
+  $out = & wslc container start $ContainerName 2>&1
+  $out | ForEach-Object { Write-Log "  $_" }
+
+  if ($LASTEXITCODE -eq 0) {
+    $started = $true
+    break
+  }
+  if ($i -lt $StartAttempts) {
+    Start-Sleep -Seconds $RetryDelaySec
+  }
+}
+
+if (-not $started) {
+  Write-Log "Todas as $StartAttempts tentativas de start falharam. Estado atual do wslc para diagnostico:"
+  $psOut = & wslc container ps -a 2>&1
+  $psOut | ForEach-Object { Write-Log "  $_" }
+}
 
 Start-Sleep -Seconds 15
 try {

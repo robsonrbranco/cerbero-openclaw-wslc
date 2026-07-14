@@ -406,6 +406,21 @@ usar uma duração grande porém válida, ex. `(New-TimeSpan -Days 3650)`
 batido e o script seguinte imprimir "sucesso" mesmo a tarefa não tendo sido
 criada. Sempre envolver em `try/catch` com `-ErrorAction Stop`.
 
+**Descoberta adicional (mesmo dia, testando troca de provider de TTS)**: o
+`ID DO CONTÊINER` de `cerbero-gateway` muda a cada restart disparado por
+reload de config (`341ba583f7d7` → `1b7b3bd0b22a` num teste real) — ou seja,
+não é "stop + start" do mesmo container, é recriação com ID novo. Isso
+explicava o `WSLC_E_CONTAINER_NOT_FOUND` que o watchdog pegava algumas
+vezes: se o poll de 5 min caía bem na janela entre o container antigo sumir
+e o novo existir, `wslc container start <nome>` não achava nada pra
+iniciar. Fix no `watchdog-cerbero.ps1`: até 3 tentativas de `start` com
+10s de espera entre elas antes de desistir, e loga `wslc container ps -a`
+inteiro quando todas falham (contexto completo pra próxima investigação, em
+vez de só "não encontrado"). Também corrigido: `Add-Content` sem
+`-Encoding UTF8` corrompia acento na saída do `wslc.exe` no log
+(`Contêiner` virava `Cont+ñiner`) — console do PowerShell 5.1 usa codepage
+OEM por padrão, não UTF-8.
+
 ## 14. PATH explícito no container para `~/.openclaw/extensions`
 
 Adicionada a variável `PATH=/home/cerbero/.openclaw/extensions:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`
