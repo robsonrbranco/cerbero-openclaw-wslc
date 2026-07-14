@@ -111,8 +111,20 @@ foreach ($required in @("ANTHROPIC_API_KEY","DEEPSEEK_API_KEY","GEMINI_API_KEY",
     }
 }
 
+# Numero de WhatsApp: dado pessoal, NAO fica hardcoded no script (que e
+# publico no GitHub) - o default do parametro e so um placeholder generico
+# ("+55SEUNUMERO"). O valor de verdade vem do .env local (nunca commitado,
+# ver .gitignore). So usa o parametro -WhatsappNumber se ele foi passado
+# explicitamente na linha de comando (nesse caso, tem prioridade sobre o .env).
+if (-not $PSBoundParameters.ContainsKey('WhatsappNumber') -and $EnvVars.ContainsKey('WHATSAPP_NUMBER') -and $EnvVars['WHATSAPP_NUMBER']) {
+    $WhatsappNumber = $EnvVars['WHATSAPP_NUMBER']
+}
+
 $EnvArgs = @()
 foreach ($k in $EnvVars.Keys) {
+    # WHATSAPP_NUMBER so serve pra montar o bootstrap.patch.json5 abaixo - nao
+    # precisa (nem deveria) virar variavel de ambiente dentro do container.
+    if ($k -eq "WHATSAPP_NUMBER") { continue }
     $EnvArgs += @("-e", "$k=$($EnvVars[$k])")
 }
 

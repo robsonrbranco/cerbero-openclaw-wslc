@@ -327,6 +327,24 @@ consegue completar essa atualização. Fix: `sudo` adicionado ao `apt-get
 install` do Dockerfile, com `/etc/sudoers.d/cerbero` configurado
 `NOPASSWD:ALL`.
 
+### Regressão: número de WhatsApp voltando pro placeholder sozinho
+
+Ao publicar o projeto no GitHub, o default do parâmetro `-WhatsappNumber` no
+`setup-cerbero-wslc.ps1` foi trocado do número real para o placeholder
+genérico `+55SEUNUMERO` (pra não vazar dado pessoal no repositório público).
+Efeito colateral não previsto na hora: como nada mais fornecia o número real,
+todo rebuild sem passar `-WhatsappNumber` explicitamente na linha de comando
+voltava a gravar o placeholder em `channels.whatsapp.allowFrom`, quebrando
+silenciosamente o allowlist.
+
+**Lição**: qualquer dado pessoal/privado tem que morar no `.env` (nunca
+commitado), nunca só como default de parâmetro num script que vai pro
+repositório público — um default "seguro pra publicar" e um default "que
+funciona de verdade" são coisas diferentes, e um script idempotente precisa
+dos dois ao mesmo tempo. Fix aplicado: `WHATSAPP_NUMBER` no `.env` (lido
+automaticamente pelo script, com o parâmetro `-WhatsappNumber` como override
+manual só se passado explicitamente).
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
