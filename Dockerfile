@@ -29,9 +29,14 @@ USER root
 
 # ffmpeg e usado pelo canal WhatsApp para transcodificar audio (TTS / voice notes)
 # para Ogg/Opus 48kHz quando o formato de origem nao e nativo. git/curl/jq ajudam
-# em diagnostico dentro do container. Mantemos a lista curta de proposito.
+# em diagnostico dentro do container. sudo entra por causa do "openclaw update":
+# sem ele, dava "Update skipped: not-git-install. Not a git checkout." porque a
+# imagem oficial instala o OpenClaw globalmente (nao via git clone), e a
+# reinstalacao global exige escrever em pasta do npm que so o root pode tocar -
+# sem sudo nao tem como o usuario "cerbero" (nao-root) rodar essa atualizacao.
+# Mantemos a lista curta de proposito.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg git curl jq \
+    && apt-get install -y --no-install-recommends ffmpeg git curl jq sudo \
     && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
@@ -45,7 +50,20 @@ RUN groupmod -n cerbero node \
     && mkdir -p /home/cerbero/.openclaw /home/cerbero/.config/openclaw /tmp/openclaw \
     && chown -R cerbero:cerbero /home/cerbero /tmp/openclaw
 
+# Sudo sem senha pro cerbero - sem TTY interativo no container nao ha como
+# digitar senha; usado pelo "openclaw update" (reinstalacao global exige root)
+# e disponivel tambem pra qualquer diagnostico manual (wslc container exec).
+RUN echo "cerbero ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/cerbero \
+    && chmod 0440 /etc/sudoers.d/cerbero
+
 ENV HOME=/home/cerbero
+# Mesmas env vars que o setup-cerbero-wslc.ps1 passa em runtime (-e) - aqui
+# garantem que o RUN de "plugins install" abaixo escreva no MESMO lugar que o
+# volume nomeado cerbero-extensions vai montar depois, em vez de cair num
+# caminho default diferente.
+ENV OPENCLAW_HOME=/home/cerbero
+ENV OPENCLAW_STATE_DIR=/home/cerbero/.openclaw
+ENV OPENCLAW_CONFIG_DIR=/home/cerbero/.openclaw
 
 USER cerbero
 WORKDIR /app
@@ -56,6 +74,23 @@ WORKDIR /app
 # oficial do OpenClaw, so que com o home do usuario "cerbero" em vez de "node").
 # /tmp/openclaw (logs rolantes) tambem e mapeado - ver setup-cerbero-wslc.ps1 -
 # porque por padrao /tmp nao persiste entre recriacoes do container.
+
+# -----------------------------------------------------------------------------
+# Pre-instala o plugin do WhatsApp DENTRO da imagem, em vez de baixar do
+# ClawHub toda vez que o container sobe. Motivo: essa instalacao em runtime ja
+# quebrou o canal inteiro uma vez (ClawHub passou a exigir um core do OpenClaw
+# mais novo que a imagem tinha, e como o passo de bootstrap apaga o plugin
+# antigo antes de reinstalar, ficamos sem WhatsApp ate a proxima imagem boa).
+# Instalar aqui, no build, tem duas vantagens: (1) falha CEDO e visivelmente
+# (o "wslc build" para e a tag "cerbero:local" nao avanca) em vez de falhar
+# silenciosamente durante um restart; (2) um volume cerbero-extensions NOVO/
+# VAZIO e populado automaticamente a partir do que esta na imagem no primeiro
+# mount (comportamento padrao do Docker/WSLC pra volume vazio) - ou seja, o
+# WhatsApp funciona mesmo se o ClawHub estiver fora do ar ou exigindo versao
+# nova bem na hora do container subir. O setup-cerbero-wslc.ps1 ainda tenta
+# uma atualizacao por cima em runtime, mas com backup/restore seguro - ver
+# comentario la.
+RUN node dist/index.js plugins install clawhub:@openclaw/whatsapp
 
 EXPOSE 18789 18790
 

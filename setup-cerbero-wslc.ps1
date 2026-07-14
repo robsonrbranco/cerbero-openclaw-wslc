@@ -118,7 +118,12 @@ foreach ($k in $EnvVars.Keys) {
 
 # --- 3. Build da imagem ------------------------------------------------------
 Write-Step "Build da imagem ($ImageTag)"
-wslc build -t $ImageTag -f Dockerfile .
+# --pull forca checar de novo o registry pela imagem base (ghcr.io/openclaw/
+# openclaw:latest) em vez de reusar a camada em cache local - sem isso ja
+# ficamos presos numa versao antiga do core (2026.6.11) enquanto o "latest"
+# real ja estava em 2026.7.1, o que quebrou a instalacao do plugin do
+# WhatsApp (exigia core mais novo que o da imagem cacheada).
+wslc build --pull -t $ImageTag -f Dockerfile .
 if ($LASTEXITCODE -ne 0) { Write-Host "Build falhou." -ForegroundColor Red; exit 1 }
 
 # --- 4. Volumes nomeados (npm/agents/extensions/state) -----------------------
@@ -265,20 +270,42 @@ $BootstrapPatchFile = Join-Path $ConfigDir "bootstrap.patch.json5"
 Set-Content -Path $BootstrapPatchFile -Value $BootstrapPatch -Encoding utf8
 Invoke-Bootstrap @("config","patch","--file","/home/cerbero/.openclaw/bootstrap.patch.json5")
 
-Write-Host "-- Instalando plugin do WhatsApp (ClawHub) --"
-# "plugins install" recusa reinstalar por cima de uma instalacao existente
-# ("plugin already exists ... delete it first") - isso quebrava o script em
-# todo rebuild depois do primeiro, porque o volume cerbero-extensions
-# persiste entre recriacoes do container. Apagamos a pasta antes (dentro do
-# proprio volume nomeado, via container descartavel como root) pra garantir
-# reinstalacao limpa toda vez - idempotente de verdade, nao so na primeira vez.
+Write-Host "-- Confirmando/atualizando plugin do WhatsApp (ClawHub) --"
+# O plugin ja vem pre-instalado NA IMAGEM (ver Dockerfile) - um volume
+# cerbero-extensions novo/vazio ja nasce com ele funcionando, sem depender de
+# rede nesse momento. Aqui so tentamos uma atualizacao por cima, com
+# backup/restore seguro: se a reinstalacao falhar (ex.: ClawHub passou a
+# exigir um core mais novo que o desta imagem - ja aconteceu uma vez e
+# deixou o WhatsApp inteiro fora do ar), restauramos a copia anterior em vez
+# de ficar sem plugin nenhum.
 wslc run --rm --user root `
     -v cerbero-extensions:/home/cerbero/.openclaw/extensions `
-    --entrypoint rm $ImageTag -rf /home/cerbero/.openclaw/extensions/whatsapp 2>$null | Out-Null
+    --entrypoint sh $ImageTag -c "if [ -d /home/cerbero/.openclaw/extensions/whatsapp ]; then rm -rf /home/cerbero/.openclaw/extensions/whatsapp.bak; mv /home/cerbero/.openclaw/extensions/whatsapp /home/cerbero/.openclaw/extensions/whatsapp.bak; fi" 2>$null | Out-Null
+
 Invoke-Bootstrap @("plugins","install","clawhub:@openclaw/whatsapp")
+if ($LASTEXITCODE -eq 0) {
+    wslc run --rm --user root `
+        -v cerbero-extensions:/home/cerbero/.openclaw/extensions `
+        --entrypoint rm $ImageTag -rf /home/cerbero/.openclaw/extensions/whatsapp.bak 2>$null | Out-Null
+    Write-Host "  Plugin do WhatsApp confirmado/atualizado." -ForegroundColor Green
+} else {
+    wslc run --rm --user root `
+        -v cerbero-extensions:/home/cerbero/.openclaw/extensions `
+        --entrypoint sh $ImageTag -c "rm -rf /home/cerbero/.openclaw/extensions/whatsapp; if [ -d /home/cerbero/.openclaw/extensions/whatsapp.bak ]; then mv /home/cerbero/.openclaw/extensions/whatsapp.bak /home/cerbero/.openclaw/extensions/whatsapp; fi" 2>$null | Out-Null
+    Write-Host "  Reinstalacao via ClawHub falhou - restaurada a versao anterior (nao ficamos sem WhatsApp)." -ForegroundColor Yellow
+}
 
 Write-Host "-- Configurando Google Workspace (gog CLI) --"
-Invoke-Bootstrap @("bash","/home/cerbero/.openclaw/workspace/wslc/bootstrap-gog.sh")
+# bootstrap-gog.sh e um script SHELL, nao um comando do openclaw - precisa
+# rodar com --entrypoint sh (ou bash), nunca via Invoke-Bootstrap (que sempre
+# monta "--entrypoint node ... dist/index.js <args>" e tentaria rodar
+# "openclaw bash ...", que nao existe - bug real: "Unknown command: openclaw
+# bash").
+$gogArgs = @("run", "--rm") + $SharedVolumeArgs + $EnvArgs + @("--entrypoint", "bash", $ImageTag, "/home/cerbero/.openclaw/workspace/wslc/bootstrap-gog.sh")
+wslc @gogArgs
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  (codigo $LASTEXITCODE - confira o log do gog acima)" -ForegroundColor Yellow
+}
 
 Write-Step "Corrigindo ownership dos volumes (antes de subir o gateway)"
 Repair-VolumeOwnership

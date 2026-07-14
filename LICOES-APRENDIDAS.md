@@ -274,6 +274,59 @@ Slack/Telegram — não confirmado ainda pro WhatsApp na 2026.6.11.
    recente do `ghcr.io/openclaw/openclaw:latest`, que deve eventualmente
    incluir a correção pro WhatsApp também.
 
+## 11. Incidente real: WhatsApp ficou sem plugin depois de um restart
+
+Aconteceu na prática (14/07/2026): um restart do container disparou
+`Plugin "@openclaw/whatsapp" requires plugin API >=2026.7.1, but this
+OpenClaw runtime exposes 2026.6.11`. Causa raiz, confirmada no log do
+gateway (`update available (latest): v2026.7.1 (current v2026.6.11)`): a
+imagem base (`ghcr.io/openclaw/openclaw:latest`) estava com o core numa
+versão presa em cache, mais antiga que a exigida pela versão mais recente do
+plugin publicada no ClawHub. Como o passo de idempotência do WhatsApp
+**apagava o plugin antes de reinstalar**, e a reinstalação falhou por causa
+do gap de versão, o canal ficou sem plugin nenhum até o próximo build bom -
+sessões do WhatsApp em andamento morreram com `unsupported channel:
+whatsapp` / `transcript tail is not resumable`.
+
+**Correções aplicadas:**
+
+1. `wslc build --pull` (em vez de só `wslc build`) - força checar de novo o
+   registry pela imagem base, em vez de reusar uma camada antiga em cache
+   local. Sem isso, `FROM ghcr.io/openclaw/openclaw:latest` pode ficar preso
+   numa versão velha indefinidamente.
+2. **Plugin do WhatsApp agora vem pré-instalado na própria imagem**
+   (`RUN node dist/index.js plugins install clawhub:@openclaw/whatsapp` no
+   Dockerfile) em vez de só ser baixado em runtime. Vantagens: falha CEDO e
+   visível (o build para) em vez de quebrar silenciosamente num restart; e um
+   volume `cerbero-extensions` novo/vazio já nasce com o plugin funcionando
+   (populado automaticamente a partir da imagem no primeiro mount), mesmo se
+   o ClawHub estiver fora do ar ou exigindo versão nova bem naquele momento.
+3. O bootstrap em runtime agora só **tenta atualizar** o plugin por cima
+   (não é mais obrigatório pra funcionar), com **backup/restore seguro**:
+   renomeia a pasta existente pra `.bak` antes de reinstalar, e só apaga o
+   backup se a reinstalação funcionar - se falhar, restaura o backup em vez
+   de deixar o canal sem nada.
+
+### Bug relacionado: `Unknown command: openclaw bash`
+
+A parte do projeto que restaura o `gog` (Google Workspace CLI, adicionada
+fora desta conversa) chamava o script `bootstrap-gog.sh` através do mesmo
+helper usado pra comandos do openclaw (`--entrypoint node ... dist/index.js
+bash <script>`) - mas `bash` não é um subcomando do `openclaw`, é um
+script shell puro. Fix: rodar com `--entrypoint bash` direto, nunca através
+do CLI do openclaw.
+
+### `openclaw update` não funcionava: `Update skipped: not-git-install`
+
+A imagem oficial instala o OpenClaw globalmente (não via `git clone`), então
+o mecanismo de auto-update cai no caminho de "reinstalação global" - que
+precisa escrever em pasta do npm que só o `root` pode tocar. Sem `sudo`
+instalado (e sem configuração passwordless, já que não há TTY interativo
+dentro do container pra digitar senha), o usuário `cerbero` não-root não
+consegue completar essa atualização. Fix: `sudo` adicionado ao `apt-get
+install` do Dockerfile, com `/etc/sudoers.d/cerbero` configurado
+`NOPASSWD:ALL`.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
