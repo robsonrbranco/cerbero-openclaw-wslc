@@ -347,6 +347,7 @@ $runArgs = @(
     "-e", "OPENCLAW_WORKSPACE_DIR=/home/cerbero/.openclaw/workspace",
     "-e", "GOG_HOME=/home/cerbero/.openclaw/state/gogcli",
     "-e", "GOG_KEYRING_BACKEND=file"
+	"-e", "PATH=/home/cerbero/.openclaw/extensions:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"	
     # GOG_KEYRING_PASSWORD NAO fica hardcoded aqui - e um segredo de verdade
     # (protege as credenciais do gog/Google Workspace). Vem do .env via
     # $EnvArgs abaixo, igual as outras chaves de API.

@@ -345,6 +345,74 @@ dos dois ao mesmo tempo. Fix aplicado: `WHATSAPP_NUMBER` no `.env` (lido
 automaticamente pelo script, com o parâmetro `-WhatsappNumber` como override
 manual só se passado explicitamente).
 
+## 12. TTS: timeout de 30s aparecendo mesmo com `messages.tts.timeoutMs` configurado (14/07/2026)
+
+O briefing diário em áudio (`gemini-3.1-flash-tts-preview`) falhava
+consistentemente com:
+
+```
+[fetch-timeout] fetch timeout after 30000ms ... url=.../gemini-3.1-flash-tts-preview:generateContent
+```
+
+A falha derruba o turno em silêncio (`turn dispatched with no queued reply
+payloads`) — sem áudio e sem fallback pra texto. O timeout que estourava
+aparece no log como `operation=fetchWithSsrFGuard`, um guard genérico de
+fetch que pode ter teto próprio de 30s independente da config do TTS (não
+confirmado no código-fonte, só inferido pela evidência do log).
+
+**Fix aplicado**: subir `messages.tts.timeoutMs` para `120000` (120s) em
+`openclaw.json`. Funcionou — depois da mudança, `Sent media reply` (áudio)
+passou a aparecer no log sem mais timeout. **Se o timeout de 30s voltar a
+aparecer mesmo com esse valor, o problema não está nessa config e sim no
+guard `fetchWithSsrFGuard`.**
+
+Efeito colateral não óbvio: `messages.tts.timeoutMs` não é hot-reloadable —
+o gateway detecta a mudança (`[reload] config change detected`) e se
+auto-reinicia via SIGTERM pra aplicar. Isso expôs o bug do próximo item.
+
+## 13. Auto-restart pós-SIGTERM é inconsistente — watchdog externo criado (14/07/2026)
+
+Depois de um SIGTERM (de config reload ou outro motivo), o container **às
+vezes** volta sozinho e às vezes não:
+
+- 1º evento (19:49): SIGTERM → shutdown limpo → voltou sozinho 3 min depois.
+- 2º evento (20:07, gatilho: reload de `messages.tts.timeoutMs`): SIGTERM →
+  shutdown limpo → **não voltou sozinho**, ficou `exited` até restart manual
+  ~7 min depois.
+
+Não identificamos a causa raiz da inconsistência (fora do escopo investigar
+o supervisor do wslc), mas o achado prático é que não dá pra confiar 100% no
+auto-recovery durante o período de teste.
+
+**Mitigação — watchdog externo** via Agendador de Tarefas do Windows, a cada
+5 min (`scripts/watchdog-cerbero.ps1` + `scripts/register-watchdog-task.ps1`):
+
+- Bate em `http://127.0.0.1:18789/healthz`; se falhar, roda `wslc container
+  start cerbero-gateway`.
+- Trava anti crash-loop: 3+ restarts em 30 min → para de tentar e só loga
+  alerta em `logs/watchdog.log` (evita mascarar um bug real com restart
+  infinito).
+- Registrado no escopo do usuário (não sobrevive reboot sem login
+  automático); rodar mesmo deslogado exigiria "Run whether user is logged on
+  or not" + salvar senha do Windows na tarefa — não configurado por padrão.
+
+**Nota de implementação (Agendador de Tarefas)**: `New-ScheduledTaskTrigger
+-RepetitionDuration ([TimeSpan]::MaxValue)` falha com `O XML da tarefa
+contém um valor formatado incorretamente ou fora do intervalo` — o schema do
+Task Scheduler não aceita a duração máxima de um `TimeSpan` do .NET. Fix:
+usar uma duração grande porém válida, ex. `(New-TimeSpan -Days 3650)`
+(~10 anos). Detalhe à parte: `Register-ScheduledTask` não é
+`-ErrorAction Stop` por padrão — sem isso, um erro de registro pode passar
+batido e o script seguinte imprimir "sucesso" mesmo a tarefa não tendo sido
+criada. Sempre envolver em `try/catch` com `-ErrorAction Stop`.
+
+## 14. PATH explícito no container para `~/.openclaw/extensions`
+
+Adicionada a variável `PATH=/home/cerbero/.openclaw/extensions:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`
+no `$runArgs` do `setup-cerbero-wslc.ps1`, garantindo que binários instalados
+em `~/.openclaw/extensions` (onde o ClawHub instala plugins, como o do
+WhatsApp — ver seção 1) fiquem resolvíveis via PATH dentro do container.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
