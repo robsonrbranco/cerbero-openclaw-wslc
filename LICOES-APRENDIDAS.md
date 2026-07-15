@@ -571,6 +571,59 @@ rodados diretamente no PowerShell do Windows (como você fez) não têm esse
 problema; é especificamente o caminho "de fora, via mount" que é frágil.
 Prefira sempre commitar/publicar direto do PowerShell do host.
 
+## 18. Incidente real: instalação nativa órfã do OpenClaw brigando pela porta 18789 (15/07/2026)
+
+Depois de um reboot do Windows (pra instalar dependências do LM Studio), o
+`setup-cerbero-wslc.ps1` parou de conseguir subir o gateway:
+
+```
+Falha ao mapear a porta '127.0.0.1:18789/tcp' ...
+Código de erro: WSAEADDRINUSE
+```
+
+`wslc container ps -a` não mostrava nenhum `cerbero-gateway` — a porta
+estava ocupada por algo fora do wslc inteiramente. Diagnóstico:
+
+```powershell
+netstat -ano | findstr :18789          # -> PID
+Get-Process -Id <PID>                  # -> node.exe, mas de onde?
+Get-CimInstance Win32_Process -Filter "ProcessId=<PID>" |
+  Select-Object ExecutablePath, CommandLine   # confirma a origem
+```
+
+O último comando revelou a causa: `node.exe ...\npm\node_modules\openclaw\dist\index.js
+gateway --port 18789` — uma instalação **nativa** do OpenClaw no Windows
+(`npm install -g openclaw`), sobra de uma fase anterior do projeto, antes de
+adotar o container WSLC. Ela subia sozinha a cada boot via um atalho
+`OpenClaw Gateway.vbs` na pasta de Startup do usuário
+(`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`) — mesmo truque
+de "rodar hidden via VBScript" que usamos de propósito no watchdog (item
+14b), só que aqui era um resíduo esquecido, não algo desejado. Duas tarefas
+agendadas órfãs da mesma fase (`OpenClaw Gateway`, `Cerbero-WSL-Gateway`)
+apareciam como `Disabled` — não eram a causa, mas mesmo lixo da época.
+
+**Por que só apareceu agora**: essa instalação nativa sempre existiu, mas o
+Windows só a executa no boot — como o computador não tinha sido reiniciado
+desde que o container assumiu o papel do gateway, ninguém notou até um
+reboot (pelo motivo que fosse) colocar os dois pra brigar pela mesma porta.
+
+**Remoção completa**:
+```powershell
+Stop-Process -Id <PID> -Force
+npm uninstall -g openclaw
+Remove-Item "$env:USERPROFILE\.openclaw" -Recurse -Force
+Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\OpenClaw Gateway.vbs" -Force
+Unregister-ScheduledTask -TaskName "OpenClaw Gateway" -Confirm:$false
+Unregister-ScheduledTask -TaskName "Cerbero-WSL-Gateway" -Confirm:$false
+```
+
+**Lição**: ao migrar de uma instalação nativa pra uma containerizada (ou
+qualquer mudança de topologia parecida), procurar ativamente por
+autostart deixado pra trás (Startup folder, `Win32_StartupCommand`,
+registro `...\CurrentVersion\Run`, Scheduled Tasks) faz parte do checklist
+de migração — não só desinstalar o software na hora, mas confirmar que
+nada vai tentar religá-lo sozinho no próximo boot.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,

@@ -1,5 +1,12 @@
 # Cerbero — OpenClaw no WSLC (WSL Containers): Claude + DeepSeek + Gemini + WhatsApp
 
+> Na mitologia grega, **Cérbero** é o cão de três cabeças que guarda os
+> portões do submundo — controla estritamente quem entra e quem sai, sem
+> exceção. É a mesma função deste container: um gateway que autentica e
+> filtra cada mensagem antes de deixá-la passar, com três "cabeças" — os
+> três provedores de modelo (Claude, DeepSeek, Gemini) — vigiando a mesma
+> porta de entrada.
+
 Este pacote sobe o [OpenClaw](https://openclaw.ai) num único container Linux
 usando o **WSL Containers** da Microsoft (`wslc.exe`), em preview público desde
 30/06/2026 (GA prevista para o outono de 2026), com os provedores de modelo
