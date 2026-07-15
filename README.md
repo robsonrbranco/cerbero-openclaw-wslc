@@ -121,6 +121,10 @@ wslc version
 Se `wslc version` não responder, o preview não está ativo na sua máquina —
 pare aqui e atualize o WSL primeiro.
 
+`gh` (GitHub CLI) confirmado instalado neste host — foi usado para publicar
+este repositório e do projeto irmão Hermes; útil para qualquer fluxo futuro
+de PR/release destes projetos.
+
 ## 2. Arquivos deste pacote
 
 | Arquivo            | Papel                                                        |

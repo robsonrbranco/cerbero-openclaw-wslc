@@ -553,6 +553,24 @@ cuidando só da própria entrada no hosts. Pequena duplicação de ~100 linhas
 de PowerShell aceita deliberadamente em troca de zero acoplamento entre os
 dois pacotes.
 
+## 18. Ferramentas confirmadas disponíveis neste host (15/07/2026)
+
+Registro simples, sem incidente por trás — só para não precisar redescobrir
+em sessões futuras: `gh` (GitHub CLI) está instalado e autenticado neste
+host, confirmado ao publicar tanto este repositório quanto o do projeto
+irmão Hermes via `gh repo create ... --push`. Relevante para qualquer
+automação futura que precise interagir com o GitHub (releases, PRs, issues)
+sem precisar verificar disponibilidade do zero.
+
+**Nota operacional relacionada**: `git add`/`git commit` rodados de dentro
+de um ambiente que acessa este repositório via bind mount tipo virtiofs
+(mesma classe de mount documentada na seção 1 deste arquivo) podem travar
+em `.git/index.lock: Operation not permitted`, mesmo sendo dono do arquivo —
+confirmado na prática ao tentar preparar este commit por essa via. `gh`/`git`
+rodados diretamente no PowerShell do Windows (como você fez) não têm esse
+problema; é especificamente o caminho "de fora, via mount" que é frágil.
+Prefira sempre commitar/publicar direto do PowerShell do host.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
