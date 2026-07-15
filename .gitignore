@@ -10,3 +10,7 @@
 # Cruft de SO
 .DS_Store
 Thumbs.db
+
+# Logs/estado gerados em runtime pelo watchdog - nao sao codigo, mudam a
+# cada execucao (5 em 5 min), nao tem porque virar commit
+logs/

@@ -9,10 +9,13 @@
     Unregister-ScheduledTask -TaskName "Cerbero Watchdog" -Confirm:$false
 #>
 
-$scriptPath = "C:\wslc\projects\cerbero\scripts\watchdog-cerbero.ps1"
+$vbsPath = "C:\wslc\projects\cerbero\scripts\run-watchdog-hidden.vbs"
 
-$action = New-ScheduledTaskAction -Execute "powershell.exe" `
-  -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
+# Chama o watchdog via wscript.exe + VBScript (WScript.Shell.Run com janela=0),
+# nao powershell.exe direto - "-WindowStyle Hidden" ainda deixa o conhost.exe
+# piscar uma janela por uma fracao de segundo, o VBScript nao tem esse problema.
+$action = New-ScheduledTaskAction -Execute "wscript.exe" `
+  -Argument "//B `"$vbsPath`""
 
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
   -RepetitionInterval (New-TimeSpan -Minutes 5) `

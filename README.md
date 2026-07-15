@@ -282,6 +282,45 @@ mensagens passam a usar o modelo principal configurado
 indisponível/limitado. Confira a ordem atual com
 `.\cerbero-cli.ps1 models status`.
 
+## 5b. Nome do serviço (`-Hostname`) e acesso pelo nome no navegador
+
+Este projeto é autossuficiente: tudo que ele precisa (build, volumes, rede,
+resolução de nome) está nos próprios scripts, sem depender de nenhum outro
+projeto WSLC no host.
+
+O container é endereçado pelo parâmetro `-Hostname` (default
+`cerbero-gateway`, igual a `-ContainerName`). Esse valor é usado em três
+lugares consistentemente: como alias na rede compartilhada (se
+`-SharedNetwork` estiver ativo), nas origens permitidas do Control UI
+(`gateway.controlUi.allowedOrigins`), e como a entrada que
+`scripts/add-hosts-entries.ps1` cria no arquivo hosts do Windows. Trocar só
+esse parâmetro (ex.: `-Hostname cerbero.suaempresa.com` numa futura migração
+para nuvem) atualiza os três lugares de uma vez, sem precisar caçar
+`"cerbero-gateway"`/`"localhost"` hardcoded em vários arquivos.
+
+Para acessar `http://cerbero-gateway:18789` direto do navegador do Windows
+(além de `http://127.0.0.1:18789`, que sempre funciona), rode uma vez como
+Administrador:
+
+```powershell
+.\scripts\add-hosts-entries.ps1
+```
+
+Ele mapeia `cerbero-gateway` para `127.0.0.1` no arquivo hosts do Windows
+(com backup automático e idempotência — ver o cabeçalho do script para
+detalhes).
+
+### Comunicação com outros containers WSLC no mesmo host (opcional)
+
+Se este host também rodar outro container WSLC com quem o Cerbero precise
+falar diretamente (por exemplo, o projeto irmão [Hermes](../hermes)/n8n,
+acionando o gateway a partir de um workflow), o parâmetro `-SharedNetwork`
+(default `hermes-cerbero-net`) conecta o Cerbero numa rede nomeada do WSLC
+compartilhada — mas isso é opcional e só faz sentido se o outro projeto
+também estiver configurado para usar a mesma rede. Nenhum dos dois projetos
+depende do outro para funcionar sozinho. Detalhes técnicos (por que isso é
+necessário, como funciona) em `LICOES-APRENDIDAS.md`, seção 16.
+
 ## 6. Verificação final
 
 - [ ] `wslc container ps` mostra `cerbero-gateway` como `Up`

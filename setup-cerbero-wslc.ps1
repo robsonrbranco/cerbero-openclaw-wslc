@@ -32,16 +32,63 @@
 .PARAMETER WhatsappNumber
   Numero pessoal usado no canal WhatsApp (dmPolicy allowlist + selfChatMode).
 
+.PARAMETER ProjectDir
+  Pasta do repositorio (Dockerfile, scripts, LICOES-APRENDIDAS.md etc.), montada
+  DENTRO do container em /home/cerbero/cerbero-project, leitura+escrita. Deixa o
+  agente (via chat, usando modelos Claude) ler e editar a propria infra.
+
+  Risco conhecido (ver item 1 do LICOES-APRENDIDAS.md): e um bind mount de pasta
+  do Windows, entao herda os mesmos problemas de permissao/locking documentados
+  la - "git commit" feito de DENTRO do container nessa pasta tende a travar em
+  ".git/index.lock: Operation not permitted" (mesmo bug que travou o commit feito
+  de fora, via sandbox do Claude, em 14/07/2026). Ou seja: o agente consegue ler
+  e editar os arquivos, mas o commit/push continua sendo um passo manual, feito
+  de fora do container. Isso e intencional, nao e um bug a corrigir - funciona
+  como um freio: nenhuma mudanca de infra vira commit sem alguem olhar o diff
+  fora do container. Alem disso, wslc.exe so existe no lado Windows - o agente
+  nao tem como rodar build/restart da propria infra sozinho, so editar texto.
+
+  NUNCA aponte este parametro para a pasta de dados (-BaseDir, que tem o .env
+  com chaves de API reais) - so a pasta de codigo-fonte deve ser montada aqui.
+
+.PARAMETER SharedNetwork
+  Nome de uma rede nomeada do WSLC (wslc network create/connect), util se
+  este host tambem rodar outro container WSLC com quem o Cerbero precise
+  falar diretamente (cada projeto WSLC neste host e independente e
+  autossuficiente - este parametro so existe pra habilitar comunicacao
+  ENTRE containers quando isso for desejado, nao e uma dependencia). Sem
+  isso, o Cerbero so e alcancavel de fora via a porta publicada no host
+  (127.0.0.1:<porta>) - dois containers WSLC NAO se enxergam automaticamente
+  entre si por nome/IP interno a menos que estejam na mesma rede nomeada
+  (mesmo mecanismo do Docker: rede default nao da DNS entre containers,
+  rede nomeada/definida pelo usuario da). Passe -SharedNetwork "" (string
+  vazia) para nao conectar a nenhuma rede extra.
+
+.PARAMETER Hostname
+  O NOME PELO QUAL o Cerbero e endereçado - na -SharedNetwork (se usada),
+  pelo host Windows (via scripts/add-hosts-entries.ps1) e nas origens
+  permitidas do Control UI (gateway.controlUi.allowedOrigins). Default:
+  igual a -ContainerName ("cerbero-gateway"), mas e um parametro SEPARADO
+  de proposito: no dia de migrar o Cerbero pra uma infra na nuvem (um
+  dominio de verdade, tipo cerbero.suaempresa.com), a mudanca fica
+  concentrada num unico parametro em vez de espalhada por varios arquivos
+  hardcoded com "cerbero-gateway"/"localhost".
+
 .EXAMPLE
   .\setup-cerbero-wslc.ps1
   .\setup-cerbero-wslc.ps1 -BaseDir D:\wslc\data\cerbero
+  .\setup-cerbero-wslc.ps1 -SharedNetwork hermes-cerbero-net
+  .\setup-cerbero-wslc.ps1 -Hostname cerbero.suaempresa.com
 #>
 
 param(
     [string]$BaseDir = "C:\wslc\data\cerbero",
     [string]$ImageTag = "cerbero:local",
     [string]$ContainerName = "cerbero-gateway",
-    [string]$WhatsappNumber = "+55SEUNUMERO"
+    [string]$WhatsappNumber = "+55SEUNUMERO",
+    [string]$ProjectDir = "C:\wslc\projects\cerbero",
+    [string]$SharedNetwork = "hermes-cerbero-net",
+    [string]$Hostname = "cerbero-gateway"
 )
 
 $ErrorActionPreference = "Stop"
@@ -179,7 +226,10 @@ $SharedVolumeArgs = @(
     "-v", "cerbero-state:/home/cerbero/.openclaw/state",
     "-v", "${WorkspaceDir}:/home/cerbero/.openclaw/workspace",
     "-v", "${SecretDir}:/home/cerbero/.config/openclaw",
-    "-v", "${LogsDir}:/tmp/openclaw"
+    "-v", "${LogsDir}:/tmp/openclaw",
+    # Repositorio de infra, leitura+escrita - ver .PARAMETER ProjectDir no
+    # cabecalho pra entender o trade-off (agente edita, commit continua manual).
+    "-v", "${ProjectDir}:/home/cerbero/cerbero-project"
 )
 
 function Invoke-Bootstrap {
@@ -257,7 +307,11 @@ $BootstrapPatch = @"
   gateway: {
     bind: "lan",
     controlUi: {
-      allowedOrigins: ["http://localhost:18789", "http://127.0.0.1:18789"],
+      // "$Hostname:18789" entra aqui pra permitir acessar o Control UI pelo
+      // nome configuravel (ver .PARAMETER Hostname) - ex.: depois de rodar
+      // scripts/add-hosts-entries.ps1, ou quando -Hostname vira um dominio
+      // real numa migracao pra nuvem - sem precisar editar este JSON5 na mao.
+      allowedOrigins: ["http://localhost:18789", "http://127.0.0.1:18789", "http://${Hostname}:18789"],
     },
   },
   env: {
@@ -322,6 +376,24 @@ if ($LASTEXITCODE -ne 0) {
 Write-Step "Corrigindo ownership dos volumes (antes de subir o gateway)"
 Repair-VolumeOwnership
 
+# --- 5b. Rede nomeada compartilhada (opcional, para outros containers WSLC alcancarem o Cerbero) ---
+# Cada container WSLC vive isolado por padrao - de fora do host, so a porta
+# publicada (-p) e alcancavel; outro container WSLC (ex.: hermes-n8n) nao
+# enxerga o Cerbero automaticamente, nem por IP nem por nome, a menos que os
+# dois estejam na MESMA rede nomeada. Ver LICOES-APRENDIDAS.md (secao sobre
+# rede compartilhada) para o raciocinio completo.
+$NetworkArgs = @()
+if ($SharedNetwork -and $SharedNetwork.Trim() -ne "") {
+    Write-Step "Rede compartilhada ($SharedNetwork)"
+    try { wslc network create $SharedNetwork 2>$null | Out-Null } catch {}
+    # --network-alias registra $Hostname como o nome resolvivel na rede
+    # compartilhada, DESACOPLADO do --name tecnico do container
+    # ($ContainerName) - mesmo raciocinio do -Hostname no Hermes. Best-effort:
+    # a doc publica do "wslc network" nao confirma exaustivamente este flag -
+    # se falhar nesta preview, o container ainda fica alcancavel pelo --name.
+    $NetworkArgs = @("--network", $SharedNetwork, "--network-alias", $Hostname)
+}
+
 # --- 6. (Re)inicia o container do gateway -----------------------------------
 Write-Step "Subindo o gateway ($ContainerName)"
 
@@ -351,7 +423,7 @@ $runArgs = @(
     # GOG_KEYRING_PASSWORD NAO fica hardcoded aqui - e um segredo de verdade
     # (protege as credenciais do gog/Google Workspace). Vem do .env via
     # $EnvArgs abaixo, igual as outras chaves de API.
-) + $SharedVolumeArgs + $EnvArgs + @($ImageTag)
+) + $SharedVolumeArgs + $NetworkArgs + $EnvArgs + @($ImageTag)
 
 wslc @runArgs
 if ($LASTEXITCODE -ne 0) { Write-Host "Falha ao iniciar o container." -ForegroundColor Red; exit 1 }
@@ -379,6 +451,16 @@ if (-not $healthy) {
 
 Write-Step "Pronto"
 Write-Host "Control UI: http://127.0.0.1:18789/  (token = OPENCLAW_GATEWAY_TOKEN do seu .env)"
+if ($SharedNetwork -and $SharedNetwork.Trim() -ne "") {
+    Write-Host ""
+    Write-Host "Rede compartilhada '$SharedNetwork' ativa - de dentro de outro container WSLC" -ForegroundColor Cyan
+    Write-Host "conectado na mesma rede, o Cerbero deve ser alcancavel em:"
+    Write-Host "  http://${Hostname}:18789   (Hostname configurado, porta INTERNA)"
+    Write-Host "Se o nome nao resolver, confira o IP com: wslc container inspect $ContainerName"
+}
+Write-Host ""
+Write-Host "Para acessar http://${Hostname}:18789 direto do navegador do Windows (nao so entre" -ForegroundColor Cyan
+Write-Host "containers), rode uma vez como Administrador: .\scripts\add-hosts-entries.ps1"
 Write-Host ""
 Write-Host "Auth, modelos, allowlist e o plugin do WhatsApp ja foram configurados via CLI acima."
 Write-Host "Unico passo que continua manual (so precisa ser feito uma vez, fica salvo no volume):"

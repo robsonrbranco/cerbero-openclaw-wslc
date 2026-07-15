@@ -19,9 +19,13 @@ param(
   [int]$MaxRestarts      = 3,    # restarts permitidos...
   [int]$WindowMinutes    = 30,   # ...dentro desta janela, antes de parar e so alertar
   [int]$StartAttempts    = 3,    # tentativas de 'wslc container start' por episodio
-  [int]$RetryDelaySec    = 10    # espera entre tentativas (cobre a janela em que o
+  [int]$RetryDelaySec    = 10,   # espera entre tentativas (cobre a janela em que o
                                   # wslc recria o container - ID muda a cada reload de
                                   # config - e 'start' pode nao achar nada por 1-2 tentativas)
+  [int]$StartupGraceSec  = 300   # o servico do WSLC demora pra subir depois de um boot
+                                  # da maquina - nao adianta (nem e seguro) tentar
+                                  # restart antes disso, o wslc.exe pode nem responder
+                                  # ainda. Enquanto o uptime for menor que isso, so sai.
 )
 
 # Sem isso, a saida do wslc.exe (que fala UTF-8) chega mangled no log
@@ -36,6 +40,22 @@ function Write-Log([string]$msg) {
 }
 
 New-Item -ItemType Directory -Force -Path (Split-Path $LogPath) | Out-Null
+
+# --- janela de graca pos-boot: o WSLC demora pra subir depois que o Windows
+# reinicia, entao checar/reiniciar cedo demais so gasta tentativas do
+# contador anti crash-loop (item 13 do LICOES-APRENDIDAS) por um motivo que
+# nao e uma falha de verdade ---
+try {
+  $bootTime = (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime
+  $uptimeSec = [int]((Get-Date) - $bootTime).TotalSeconds
+  if ($uptimeSec -lt $StartupGraceSec) {
+    Write-Log "Dentro da janela de graca pos-boot (uptime ${uptimeSec}s < ${StartupGraceSec}s) - pulando checagem."
+    exit 0
+  }
+} catch {
+  # Se nao der pra ler o uptime por algum motivo, nao bloqueia o watchdog -
+  # so segue com a checagem normal.
+}
 
 # --- checagem de saude ---
 $healthy = $false

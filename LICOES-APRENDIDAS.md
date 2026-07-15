@@ -428,6 +428,131 @@ no `$runArgs` do `setup-cerbero-wslc.ps1`, garantindo que binários instalados
 em `~/.openclaw/extensions` (onde o ClawHub instala plugins, como o do
 WhatsApp — ver seção 1) fiquem resolvíveis via PATH dentro do container.
 
+## 14b. `-WindowStyle Hidden` não é suficiente pra rodar em background de verdade
+
+O watchdog (item 13) rodava via `powershell.exe -WindowStyle Hidden -File
+...` direto na ação da tarefa agendada. Na prática, uma janela de console
+ainda pisca na tela a cada execução (a cada 5 min) — o `conhost.exe` abre a
+janela antes do `-WindowStyle Hidden` ser aplicado, então o parâmetro chega
+tarde demais pra evitar o flash.
+
+**Fix**: trocar a ação da tarefa de `powershell.exe` direto para
+`wscript.exe //B run-watchdog-hidden.vbs`, onde o `.vbs` chama o
+PowerShell via `WScript.Shell.Run(cmd, 0, True)` — o parâmetro de janela
+`0` nunca chega a criar uma janela visível, nem por um instante (diferente
+de `-WindowStyle Hidden`, que esconde uma janela que já existiu por um
+frame). Depois de trocar, é preciso re-registrar a tarefa
+(`register-watchdog-task.ps1` de novo, com `-Force`) pra ação nova
+substituir a antiga.
+
+## 14c. Grace period pós-boot no watchdog
+
+O serviço do WSLC demora um pouco pra subir depois que o Windows reinicia.
+Como a tarefa agendada roda de 5 em 5 min com `-StartWhenAvailable`, um
+reboot podia disparar uma checagem "atrasada" bem cedo, com o WSLC ainda não
+pronto — o `/healthz` falha (esperado, não é bug), o watchdog tenta
+`wslc container start` (que pode nem funcionar ainda), e isso consome
+tentativas do contador anti crash-loop por um motivo que não é uma falha de
+verdade.
+
+**Fix**: no início do `watchdog-cerbero.ps1`, calcula o uptime da máquina
+(`Win32_OperatingSystem.LastBootUpTime`) e, se for menor que
+`$StartupGraceSec` (padrão 300s), sai sem checar nada — nem loga como
+falha. Não precisa mexer no trigger da tarefa agendada nem saber exatamente
+quando o Task Scheduler decidiu rodar o script; funciona em qualquer
+cenário de boot (rápido, lento, com catch-up de execução perdida).
+
+## 15. Repositório mapeado dentro do container (leitura+escrita), de propósito (14/07/2026)
+
+Decisão consciente: `setup-cerbero-wslc.ps1` agora monta `C:\wslc\projects\cerbero`
+(o repositório, não a pasta de dados) dentro do container em
+`/home/cerbero/cerbero-project`, leitura+escrita — parâmetro `-ProjectDir`.
+Objetivo: o próprio agente (via chat, usando modelos Claude quando a tarefa
+pedir cuidado) consegue ler e editar a infra que ele mesmo roda em cima.
+
+**Risco aceito, não corrigido**: por ser bind mount de pasta do Windows, herda
+os mesmos problemas do item 1 (permissão 777, locking não confiável). Na
+prática isso significa que `git commit` feito **de dentro do container**
+nessa pasta deve travar em `.git/index.lock: Operation not permitted` — o
+mesmo bug que travou um commit feito de fora, pelo sandbox do Claude, nesse
+mesmo dia. Decidimos não contornar isso, porque funciona como freio natural:
+o agente edita o texto dos arquivos, mas versionar (commit/push) continua
+sendo um passo manual de fora do container, com humano olhando o diff antes.
+
+**Segundo freio, estrutural, não configurado por nós**: `wslc.exe` só existe
+no lado Windows. Um processo dentro do container Linux não tem como chamar
+`wslc build`/`container run` pra aplicar as próprias mudanças de
+Dockerfile/script — só consegue editar texto. Pior cenário realista de uma
+edição ruim: fica parada num arquivo até alguém rodar o setup script de
+propósito, nunca um rebuild automático e silencioso.
+
+**Regra dura**: `-ProjectDir` só deve apontar pra pasta de **código-fonte**
+(`C:\wslc\projects\cerbero`). Nunca apontar pra pasta de dados (`-BaseDir`,
+que tem o `.env` com chaves de API reais) — o mount novo foi desenhado
+especificamente pra não tocar em segredo nenhum.
+
+## 16. Dois containers WSLC não se enxergam entre si por padrão (15/07/2026)
+
+Descoberto operando o Cerbero junto com o projeto irmão
+[Hermes](../hermes) (n8n): `localhost` de dentro do `cerbero-gateway` aponta
+pra ele mesmo, não pro `hermes-n8n` nem pro host Windows — e por padrão os
+dois containers WSLC não conseguem se alcançar de forma nenhuma (nem por
+nome, nem por IP), mesmo rodando no mesmo host, porque cada `wslc run` sem
+`--network` explícito cai numa rede default onde containers não resolvem uns
+aos outros.
+
+Investigação completa (arquitetura do `wslc.exe`, por que isso acontece, e a
+solução com `wslc network create`/`--network`) documentada no
+[LICOES-APRENDIDAS.md do Hermes, seção 5b](../hermes/LICOES-APRENDIDAS.md) —
+não duplicado aqui pra não desalinhar as duas cópias no futuro.
+
+**Fix aplicado neste projeto**: parâmetro `-SharedNetwork` (default
+`hermes-cerbero-net`) em `setup-cerbero-wslc.ps1`, espelhando o mesmo
+parâmetro no `setup-hermes-wslc.ps1`. Depois de rodar os dois setups, de
+dentro do `cerbero-gateway` o Hermes fica em `http://hermes-n8n:5678`
+(nome do container, porta interna — não a porta publicada no host).
+
+**Independência preservada**: `-SharedNetwork` é opcional (`-SharedNetwork
+""` desativa) e cada projeto cria/usa a rede por conta própria — nenhum dos
+dois scripts lê, importa ou depende de arquivo do outro projeto. A rede
+nomeada só existe se ambos os setups rodarem apontando pro mesmo nome de
+rede; não há acoplamento de código, só uma convenção de nome compartilhada
+entre quem optar por usá-la.
+
+## 17. `-Hostname`: nome do serviço desacoplado do `-ContainerName`, pensando em migração futura (15/07/2026)
+
+Depois de resolver a lição 16, veio o pedido de acessar
+`http://cerbero-gateway:18789` direto do navegador do Windows (não só entre
+containers) — e, junto, o requisito de que cada projeto WSLC seja
+autossuficiente: script de resolução de nome próprio, não compartilhado
+com o Hermes, e um único ponto de configuração que precise mudar no dia de
+uma eventual migração para uma infraestrutura na nuvem (domínio real em vez
+de nome de container local).
+
+**Fix aplicado**: parâmetro `-Hostname` (default `cerbero-gateway`, igual a
+`-ContainerName` mas independente dele) em `setup-cerbero-wslc.ps1`, usado
+em três lugares:
+
+1. `--network-alias $Hostname` ao conectar na `-SharedNetwork` (best-effort
+   — a doc pública do `wslc network` ainda não confirma exaustivamente esse
+   flag nesta preview; se falhar, o container continua alcançável pelo
+   `--name` normalmente).
+2. `gateway.controlUi.allowedOrigins` no `bootstrap.patch.json5`, que agora
+   inclui `http://${Hostname}:18789` além de `localhost`/`127.0.0.1`.
+3. Valor default do parâmetro `-Hostname` em `scripts/add-hosts-entries.ps1`
+   **próprio deste projeto** (não um script compartilhado com o Hermes — ver
+   ressalva abaixo).
+
+**Por que o script de hosts não é compartilhado entre os dois projetos**:
+uma versão anterior desta solução mantinha um único
+`add-hosts-entries.ps1` só no Hermes, com o Cerbero referenciando esse
+caminho no README. Isso quebrava a autossuficiência dos dois pacotes — para
+usar o Cerbero sozinho, seria preciso ter o repositório do Hermes clonado
+também. Corrigido: cada projeto tem sua própria cópia do script, cada uma
+cuidando só da própria entrada no hosts. Pequena duplicação de ~100 linhas
+de PowerShell aceita deliberadamente em troca de zero acoplamento entre os
+dois pacotes.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
