@@ -450,7 +450,8 @@ if (-not $healthy) {
 }
 
 Write-Step "Pronto"
-Write-Host "Control UI: http://127.0.0.1:18789/  (token = OPENCLAW_GATEWAY_TOKEN do seu .env)"
+Write-Host "Control UI: http://${Hostname}:18789/  (requer scripts\add-hosts-entries.ps1 rodado uma vez como Administrador)"
+Write-Host "Fallback sem hosts configurado: http://127.0.0.1:18789/  (token = OPENCLAW_GATEWAY_TOKEN do seu .env)"
 if ($SharedNetwork -and $SharedNetwork.Trim() -ne "") {
     Write-Host ""
     Write-Host "Rede compartilhada '$SharedNetwork' ativa - de dentro de outro container WSLC" -ForegroundColor Cyan
