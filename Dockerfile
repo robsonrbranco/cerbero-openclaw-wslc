@@ -90,9 +90,15 @@ WORKDIR /app
 # nova bem na hora do container subir. O setup-cerbero-wslc.ps1 ainda tenta
 # uma atualizacao por cima em runtime, mas com backup/restore seguro - ver
 # comentario la.
-RUN node dist/index.js plugins install clawhub:@openclaw/whatsapp
+# "|| true": o ClawHub as vezes exige uma versao do core mais nova do que a
+# tag "latest" publicada (ja aconteceu, ver historico deste arquivo) -- sem
+# isso, o build inteiro falha. Deixamos best-effort aqui porque o volume
+# cerbero-data persistente (extensions/whatsapp) e a fonte de verdade em
+# runtime de qualquer forma -- se essa instalacao no build falhar, o plugin
+# ja migrado no volume continua funcionando normalmente.
+RUN node dist/index.js plugins install clawhub:@openclaw/whatsapp || echo "aviso: instalacao do plugin no build falhou (provavel desalinhamento de versao do ClawHub) - seguindo com o que estiver no volume persistente"
 
-EXPOSE 18789 18790
+EXPOSE 18789
 
 # CMD real do servico openclaw-gateway no docker-compose.yml oficial - sem o
 # subcomando "gateway" (so "node dist/index.js"), o processo cai num modo de

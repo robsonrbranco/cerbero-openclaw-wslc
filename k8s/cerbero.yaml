@@ -1,0 +1,196 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: wslc
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cerbero-config
+  namespace: wslc
+data:
+  TERM: "xterm-256color"
+  OPENCLAW_HOME: "/home/cerbero"
+  OPENCLAW_STATE_DIR: "/home/cerbero/.openclaw"
+  OPENCLAW_CONFIG_PATH: "/home/cerbero/.openclaw/openclaw.json"
+  OPENCLAW_CONFIG_DIR: "/home/cerbero/.openclaw"
+  OPENCLAW_WORKSPACE_DIR: "/home/cerbero/.openclaw/workspace"
+  GOG_HOME: "/home/cerbero/.openclaw/state/gogcli"
+  GOG_KEYRING_BACKEND: "file"
+  PATH: "/home/cerbero/.openclaw/extensions:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  # O openclaw.json migrado foi escrito pela versao 2026.7.1, mas a imagem
+  # ghcr.io/openclaw/openclaw:latest publicada ainda esta na 2026.6.34 (mesmo
+  # desalinhamento que afeta o plugin do WhatsApp, ver Dockerfile). Sem essa
+  # flag o gateway recusa subir ("Refusing to run automatic gateway startup
+  # migrations"). E o proprio escape-hatch documentado pelo OpenClaw pra
+  # recuperacao/migracao intencional -- nao estamos fazendo downgrade de
+  # dado nenhum, so rodando um binario temporariamente mais velho que o
+  # config ate a imagem publicada alcancar essa versao.
+  OPENCLAW_ALLOW_OLDER_BINARY_DESTRUCTIVE_ACTIONS: "1"
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cerbero-data
+  namespace: wslc
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cerbero-secrets
+  namespace: wslc
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 100Mi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cerbero-projects
+  namespace: wslc
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cerbero
+  namespace: wslc
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: cerbero
+  template:
+    metadata:
+      labels:
+        app: cerbero
+    spec:
+      initContainers:
+        - name: sync-projects
+          image: alpine/git:latest
+          envFrom:
+            - secretRef:
+                name: cerbero-git-token
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              cd /projects
+              for repo in cerbero-openclaw-wslc hermes-n8n-wslc argos-scraper-wslc; do
+                dir=$(echo "$repo" | sed 's/-wslc$//' | sed 's/-openclaw//; s/-n8n//; s/-scraper//')
+                url="https://x-access-token:${GIT_TOKEN}@github.com/robsonrbranco/${repo}.git"
+                if [ -d "$dir/.git" ]; then
+                  echo "Atualizando $dir..."
+                  git -C "$dir" pull --ff-only || echo "pull falhou pra $dir, seguindo"
+                else
+                  echo "Clonando $repo em $dir..."
+                  git clone "$url" "$dir" || echo "clone falhou pra $dir, seguindo"
+                fi
+              done
+          volumeMounts:
+            - name: projects
+              mountPath: /projects
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: cerbero
+          image: ghcr.io/robsonrbranco/cerbero:latest
+          ports:
+            - containerPort: 18789
+          envFrom:
+            - configMapRef:
+                name: cerbero-config
+            - secretRef:
+                name: cerbero-env
+          volumeMounts:
+            - name: data
+              mountPath: /home/cerbero/.openclaw
+            - name: secrets
+              mountPath: /home/cerbero/.config/openclaw
+            - name: projects
+              mountPath: /home/cerbero/projects
+            - name: hermes-data
+              mountPath: /home/cerbero/data/hermes
+            - name: argos-certs
+              mountPath: /home/cerbero/data/argos/certs
+              readOnly: true
+            - name: argos-env
+              mountPath: /home/cerbero/data/argos/env
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: cerbero-data
+        - name: secrets
+          persistentVolumeClaim:
+            claimName: cerbero-secrets
+        - name: projects
+          persistentVolumeClaim:
+            claimName: cerbero-projects
+        - name: hermes-data
+          persistentVolumeClaim:
+            claimName: hermes-data
+        - name: argos-certs
+          secret:
+            secretName: argos-certs
+        - name: argos-env
+          secret:
+            secretName: argos-env
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cerbero
+  namespace: wslc
+spec:
+  selector:
+    app: cerbero
+  ports:
+    - port: 18789
+      targetPort: 18789
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cerbero
+  namespace: wslc
+spec:
+  rules:
+    - host: cerbero.ecomciencia.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cerbero
+                port:
+                  number: 18789

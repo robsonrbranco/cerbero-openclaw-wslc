@@ -1,0 +1,60 @@
+name: deploy
+
+on:
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - "**.md"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        run: |
+          docker build -t ghcr.io/robsonrbranco/cerbero:${{ github.sha }} -t ghcr.io/robsonrbranco/cerbero:latest .
+          docker push ghcr.io/robsonrbranco/cerbero:${{ github.sha }}
+          docker push ghcr.io/robsonrbranco/cerbero:latest
+
+      - uses: azure/setup-kubectl@v4
+
+      - name: Deploy to k3s
+        run: |
+          echo "${{ secrets.KUBECONFIG_OLYMPUS }}" > kubeconfig.yaml
+          export KUBECONFIG=kubeconfig.yaml
+
+          kubectl apply -f k8s/cerbero.yaml
+
+          kubectl -n wslc create secret docker-registry ghcr-pull-secret \
+            --docker-server=ghcr.io \
+            --docker-username="${{ github.actor }}" \
+            --docker-password="${{ secrets.GITHUB_TOKEN }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl -n wslc create secret generic cerbero-env \
+            --from-literal=ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
+            --from-literal=DEEPSEEK_API_KEY="${{ secrets.DEEPSEEK_API_KEY }}" \
+            --from-literal=GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+            --from-literal=OPENCLAW_GATEWAY_TOKEN="${{ secrets.OPENCLAW_GATEWAY_TOKEN }}" \
+            --from-literal=GOG_KEYRING_PASSWORD="${{ secrets.GOG_KEYRING_PASSWORD }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl -n wslc create secret generic cerbero-git-token \
+            --from-literal=GIT_TOKEN="${{ secrets.GH_PAT_FOR_CLONE }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl -n wslc set image deployment/cerbero cerbero=ghcr.io/robsonrbranco/cerbero:${{ github.sha }}
+          kubectl -n wslc rollout status deployment/cerbero --timeout=180s
+          rm kubeconfig.yaml
