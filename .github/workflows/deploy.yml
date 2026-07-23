@@ -48,6 +48,7 @@ jobs:
             --from-literal=ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
             --from-literal=DEEPSEEK_API_KEY="${{ secrets.DEEPSEEK_API_KEY }}" \
             --from-literal=GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+            --from-literal=OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
             --from-literal=OPENCLAW_GATEWAY_TOKEN="${{ secrets.OPENCLAW_GATEWAY_TOKEN }}" \
             --from-literal=GOG_KEYRING_PASSWORD="${{ secrets.GOG_KEYRING_PASSWORD }}" \
             --dry-run=client -o yaml | kubectl apply -f -
