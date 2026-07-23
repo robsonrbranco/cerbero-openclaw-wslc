@@ -24,9 +24,9 @@ jobs:
 
       - name: Build and push image
         run: |
-          docker build -t ghcr.io/robsonrbranco/cerbero:${{ github.sha }} -t ghcr.io/robsonrbranco/cerbero:latest .
-          docker push ghcr.io/robsonrbranco/cerbero:${{ github.sha }}
-          docker push ghcr.io/robsonrbranco/cerbero:latest
+          docker build -t ghcr.io/robsonrbranco/cerbero-gateway:${{ github.sha }} -t ghcr.io/robsonrbranco/cerbero-gateway:latest .
+          docker push ghcr.io/robsonrbranco/cerbero-gateway:${{ github.sha }}
+          docker push ghcr.io/robsonrbranco/cerbero-gateway:latest
 
       - uses: azure/setup-kubectl@v4
 
@@ -55,6 +55,6 @@ jobs:
             --from-literal=GIT_TOKEN="${{ secrets.GH_PAT_FOR_CLONE }}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-          kubectl -n wslc set image deployment/cerbero cerbero=ghcr.io/robsonrbranco/cerbero:${{ github.sha }}
+          kubectl -n wslc set image deployment/cerbero cerbero=ghcr.io/robsonrbranco/cerbero-gateway:${{ github.sha }}
           kubectl -n wslc rollout status deployment/cerbero --timeout=180s
           rm kubeconfig.yaml

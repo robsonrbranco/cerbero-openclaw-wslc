@@ -113,7 +113,7 @@ spec:
         - name: ghcr-pull-secret
       containers:
         - name: cerbero
-          image: ghcr.io/robsonrbranco/cerbero:latest
+          image: ghcr.io/robsonrbranco/cerbero-gateway:latest
           ports:
             - containerPort: 18789
           envFrom:
