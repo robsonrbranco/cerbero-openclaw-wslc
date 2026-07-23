@@ -33,9 +33,18 @@
   Numero pessoal usado no canal WhatsApp (dmPolicy allowlist + selfChatMode).
 
 .PARAMETER ProjectDir
-  Pasta do repositorio (Dockerfile, scripts, LICOES-APRENDIDAS.md etc.), montada
-  DENTRO do container em /home/cerbero/cerbero-project, leitura+escrita. Deixa o
-  agente (via chat, usando modelos Claude) ler e editar a propria infra.
+  Pasta raiz do repositorio de projetos WSLC (contem as pastas filhas cerbero/,
+  hermes/, argos/), montada DENTRO do container em /home/cerbero/projects,
+  leitura+escrita. Deixa o agente ler e editar a propria infra e tambem consultar
+  os projetos irmaos (Hermes, Argos) pelo chat.
+
+.PARAMETER DataDir
+  Pasta raiz de dados dos containers WSLC (contem as pastas filhas cerbero/,
+  hermes/, argos/ com seus .env e configs), montada em /home/cerbero/data,
+  leitura+escrita. Decisao CONSCIENTE e confirmada por Branco em 16/07/2026:
+  da ao agente acesso aos segredos (.env) de TODOS os projetos, nao so os
+  proprios - risco aceito de proposito, nao e um descuido. Ver
+  LICOES-APRENDIDAS.md item 21 pro raciocinio completo e a data da decisao.
 
   Risco conhecido (ver item 1 do LICOES-APRENDIDAS.md): e um bind mount de pasta
   do Windows, entao herda os mesmos problemas de permissao/locking documentados
@@ -43,13 +52,21 @@
   ".git/index.lock: Operation not permitted" (mesmo bug que travou o commit feito
   de fora, via sandbox do Claude, em 14/07/2026). Ou seja: o agente consegue ler
   e editar os arquivos, mas o commit/push continua sendo um passo manual, feito
-  de fora do container. Isso e intencional, nao e um bug a corrigir - funciona
-  como um freio: nenhuma mudanca de infra vira commit sem alguem olhar o diff
-  fora do container. Alem disso, wslc.exe so existe no lado Windows - o agente
+  de fora do container. Alem disso, wslc.exe so existe no lado Windows - o agente
   nao tem como rodar build/restart da propria infra sozinho, so editar texto.
 
-  NUNCA aponte este parametro para a pasta de dados (-BaseDir, que tem o .env
-  com chaves de API reais) - so a pasta de codigo-fonte deve ser montada aqui.
+.PARAMETER MemoryLimit
+  Teto de RAM do container do gateway (`wslc run -m/--memory`, ex.: "2G",
+  "512M"). Default "2G" - confirmado com Branco em 16/07/2026, pensando em
+  deixar espaco pro LM Studio (inferencia local) rodar ao mesmo tempo na
+  mesma maquina. Nao limita o resto da VM do WSL2 (todas as distros WSL +
+  outros containers wslc, ex.: Hermes) - isso e um teto SEPARADO, configurado
+  fora deste script, em %UserProfile%\.wslconfig (secao [wsl2], chave
+  memory=). Se o Cerbero estourar esse limite, o processo dentro do
+  container e OOM-killed pelo kernel da VM (nao o Windows) - confira
+  `wslc container logs cerbero-gateway` por sinais de morte abrupta (sem o
+  "[shutdown] completed cleanly" que os restarts normais mostram) se isso
+  virar suspeita.
 
 .PARAMETER SharedNetwork
   Nome de uma rede nomeada do WSLC (wslc network create/connect), util se
@@ -86,9 +103,11 @@ param(
     [string]$ImageTag = "cerbero:local",
     [string]$ContainerName = "cerbero-gateway",
     [string]$WhatsappNumber = "+55SEUNUMERO",
-    [string]$ProjectDir = "C:\wslc\projects\cerbero",
+    [string]$ProjectDir = "C:\wslc\projects",
+    [string]$DataDir = "C:\wslc\data",
     [string]$SharedNetwork = "hermes-cerbero-net",
-    [string]$Hostname = "cerbero-gateway"
+    [string]$Hostname = "cerbero-gateway",
+    [string]$MemoryLimit = "2G"
 )
 
 $ErrorActionPreference = "Stop"
@@ -229,7 +248,10 @@ $SharedVolumeArgs = @(
     "-v", "${LogsDir}:/tmp/openclaw",
     # Repositorio de infra, leitura+escrita - ver .PARAMETER ProjectDir no
     # cabecalho pra entender o trade-off (agente edita, commit continua manual).
-    "-v", "${ProjectDir}:/home/cerbero/cerbero-project"
+    "-v", "${ProjectDir}:/home/cerbero/projects",
+    # Dados de todos os containers (.env, configs das pastas filhas cerbero/,
+    # hermes/, argos/) — risco aceito e deliberado (igual ao -ProjectDir).
+    "-v", "${DataDir}:/home/cerbero/data"
 )
 
 function Invoke-Bootstrap {
@@ -311,7 +333,15 @@ $BootstrapPatch = @"
       // nome configuravel (ver .PARAMETER Hostname) - ex.: depois de rodar
       // scripts/add-hosts-entries.ps1, ou quando -Hostname vira um dominio
       // real numa migracao pra nuvem - sem precisar editar este JSON5 na mao.
-      allowedOrigins: ["http://localhost:18789", "http://127.0.0.1:18789", "http://${Hostname}:18789"],
+      //
+      // A variante "$Hostname.localhost" TAMBEM entra aqui de proposito: o
+      // navegador so trata como "contexto seguro" (exigido pras APIs de
+      // device identity do Control UI) http://localhost, http://127.0.0.1,
+      // ou qualquer nome terminando em ".localhost" - um hostname comum tipo
+      // "cerbero-gateway" nunca se qualifica, mesmo resolvendo pra 127.0.0.1
+      // via hosts file (erro "control ui requires device identity"). Ver
+      // LICOES-APRENDIDAS.md.
+      allowedOrigins: ["http://localhost:18789", "http://127.0.0.1:18789", "http://${Hostname}:18789", "http://${Hostname}.localhost:18789"],
     },
   },
   env: {
@@ -401,16 +431,15 @@ Write-Host "Parando/removendo container anterior (se existir)..."
 try { wslc container stop $ContainerName 2>$null | Out-Null } catch {}
 try { wslc container rm $ContainerName 2>$null | Out-Null } catch {}
 
-# Portas: 18789 e o Control UI/API do Gateway; 18790 e a porta de bridge que o
-# docker-compose.yml oficial tambem publica. Env vars fixas abaixo replicam o
+# Porta unica: 18789 (Control UI/API do Gateway). Env vars fixas abaixo replicam o
 # que o compose oficial fixa explicitamente (evita qualquer valor vazando de
 # fora e apontando para caminho errado dentro do container - ver comentario
 # do bug #77436 no docker-compose.yml do OpenClaw).
 $runArgs = @(
     "run", "-d",
     "--name", $ContainerName,
+    "-m", $MemoryLimit,
     "-p", "18789:18789",
-    "-p", "18790:18790",
     "-e", "TERM=xterm-256color",
     "-e", "OPENCLAW_HOME=/home/cerbero",
     "-e", "OPENCLAW_STATE_DIR=/home/cerbero/.openclaw",

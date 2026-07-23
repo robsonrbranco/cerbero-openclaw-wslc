@@ -464,11 +464,28 @@ cenário de boot (rápido, lento, com catch-up de execução perdida).
 
 ## 15. Repositório mapeado dentro do container (leitura+escrita), de propósito (14/07/2026)
 
-Decisão consciente: `setup-cerbero-wslc.ps1` agora monta `C:\wslc\projects\cerbero`
-(o repositório, não a pasta de dados) dentro do container em
-`/home/cerbero/cerbero-project`, leitura+escrita — parâmetro `-ProjectDir`.
-Objetivo: o próprio agente (via chat, usando modelos Claude quando a tarefa
-pedir cuidado) consegue ler e editar a infra que ele mesmo roda em cima.
+Decisão consciente: `setup-cerbero-wslc.ps1` agora monta um repositório
+dentro do container (não a pasta de dados), leitura+escrita — parâmetro
+`-ProjectDir`. Objetivo: o próprio agente (via chat, usando modelos Claude
+quando a tarefa pedir cuidado) consegue ler e editar a infra que ele mesmo
+roda em cima.
+
+**Atualização (15/07/2026): escopo alargado pra `C:\wslc\projects` inteiro.**
+Inicialmente `-ProjectDir` apontava só pra `C:\wslc\projects\cerbero`,
+montado em `/home/cerbero/cerbero-project`. Passou a apontar pra
+`C:\wslc\projects` (a pasta-mãe de todos os projetos WSLC do host — Cerbero,
+Hermes, e agora sabemos que também Argos, ver item 20), montado em
+`/home/cerbero/projects` — de propósito, pra permitir automação/edição entre
+projetos.
+
+**Nota de coordenação (16/07/2026)**: com esse mount, tanto o agente rodando
+DENTRO do container quanto sessões externas (como esta) passaram a editar os
+mesmos arquivos deste repositório concorrentemente, sem nenhum lock ou
+coordenação. Já causou pelo menos uma perda real de edição (esta própria
+atualização de escopo, que precisou ser reescrita) e números de seção
+duplicados neste arquivo. Nenhuma solução automática foi implementada ainda
+— por ora, quem editar por último "vence"; vale conferir o histórico do git
+antes de assumir que uma seção está como você a deixou.
 
 **Risco aceito, não corrigido**: por ser bind mount de pasta do Windows, herda
 os mesmos problemas do item 1 (permissão 777, locking não confiável). Na
@@ -571,7 +588,7 @@ rodados diretamente no PowerShell do Windows (como você fez) não têm esse
 problema; é especificamente o caminho "de fora, via mount" que é frágil.
 Prefira sempre commitar/publicar direto do PowerShell do host.
 
-## 18. Incidente real: instalação nativa órfã do OpenClaw brigando pela porta 18789 (15/07/2026)
+## 18b. Incidente real: instalação nativa órfã do OpenClaw brigando pela porta 18789 (15/07/2026)
 
 Depois de um reboot do Windows (pra instalar dependências do LM Studio), o
 `setup-cerbero-wslc.ps1` parou de conseguir subir o gateway:
@@ -623,6 +640,158 @@ autostart deixado pra trás (Startup folder, `Win32_StartupCommand`,
 registro `...\CurrentVersion\Run`, Scheduled Tasks) faz parte do checklist
 de migração — não só desinstalar o software na hora, mas confirmar que
 nada vai tentar religá-lo sozinho no próximo boot.
+
+## 19. `.localhost` é a única forma de um hostname custom virar "contexto seguro" sem HTTPS
+
+Depois de liberar `http://cerbero-gateway:18789` na `allowedOrigins` (item
+anterior, resolve o bloqueio de CORS), o Control UI ainda recusava conectar:
+
+```
+control ui requires device identity (use HTTPS or localhost secure context)
+```
+
+Causa: navegador só concede APIs de "contexto seguro" (WebCrypto/device
+identity) em três casos sobre **HTTP puro**, sem TLS — `http://localhost`,
+`http://127.0.0.1` (e `[::1]`), ou qualquer hostname terminando em
+**`.localhost`**. Isso é regra do navegador olhando o *texto* do hostname,
+não o IP resolvido — `cerbero-gateway` mapeado pra 127.0.0.1 via hosts file
+nunca se qualifica, custe o que custar.
+
+**Fix**: usar `cerbero-gateway.localhost` em vez de `cerbero-gateway`.
+Coberto pelo mesmo parâmetro `-Hostname` de sempre — `allowedOrigins` no
+`setup-cerbero-wslc.ps1` agora inclui `${Hostname}` E `${Hostname}.localhost`
+lado a lado. Falta só mapear a variante `.localhost` no hosts do Windows:
+
+```powershell
+.\scripts\add-hosts-entries.ps1 -Hostname cerbero-gateway.localhost
+```
+
+Depois disso, `http://cerbero-gateway.localhost:18789/chat?session=main`
+funciona sem HTTPS. `http://cerbero-gateway:18789` (sem `.localhost`)
+continua útil pra outros usos (ex.: chamadas de API que não passem pelo
+navegador), só não serve pro Control UI.
+
+## 20. Convenção de nome de arquivos de certificado: CNPJ sem máscara (16/07/2026)
+
+Os certificados digitais A1 (.pfx) e os PDFs de CNPJ correspondentes devem
+seguir a convenção de nome `<cnpj-sem-mascara>.<ext>` — ex.:
+`37879136000123.pfx` e `37879136000123.pdf`. **Nunca** nomes genéricos como
+`certificado-A1.pfx` ou `CNPJ.pdf`.
+
+**Motivo**: múltiplas empresas podem ter certificados no mesmo diretório, e
+nomes genéricos obrigam a abrir cada arquivo para identificar a qual CNPJ
+pertence — além de causar conflito de nomes se mais de um certificado for
+armazenado no mesmo lugar. A chave primária de identificação de uma empresa
+é o CNPJ, então ele deve estar visível no nome do arquivo.
+
+**Adotado em**: `C:\wslc\data\cerbero\certs\` (dados persistentes, fora do
+repositório git) e seguido pelo projeto irmão Argos.
+
+## 21. `-DataDir`: agente ganha acesso aos `.env` de todos os projetos, decisão consciente (16/07/2026)
+
+`setup-cerbero-wslc.ps1` ganhou o parâmetro `-DataDir` (default
+`C:\wslc\data`), montado em `/home/cerbero/data`, leitura+escrita — monta a
+pasta-mãe de dados de **todos** os projetos WSLC do host (`cerbero/`,
+`hermes/`, `argos/`), não só a do Cerbero. Isso inclui os `.env` reais de
+cada projeto (chaves de API, senhas de keyring etc.).
+
+**Confirmado com Branco em 16/07/2026**: decisão consciente, não um
+descuido — ele quer que o agente consiga ler/usar segredos de outros
+projetos irmãos quando necessário. Diferente da regra original do item 15
+("nunca aponte pra pasta de dados"), que valia até esse momento.
+
+Mesmos dois freios do item 15 se aplicam aqui (bind mount virtiofs =
+`git commit` de dentro do container tende a travar em `.git/index.lock`;
+`wslc.exe` só existe no Windows, então o agente não reaplica sozinho nenhuma
+mudança de infra) — mas agora cobrindo segredo de verdade, não só código.
+
+**Escopo confirmado (16/07/2026)**: "autonomia" aqui significa o agente
+poder **ler e preparar** mudanças (editar scripts, ajustar config, montar o
+comando certo) — nunca **executar** `wslc.exe` sozinho. Quem builda/sobe/
+reinicia containers continua sendo Branco, manualmente, no PowerShell do
+host. Isso não é uma limitação a remover depois; é o desenho pretendido.
+Se em algum momento isso deixar de ser desejado, é reverter `-DataDir` pra
+uma string vazia (ou remover a linha correspondente do `$SharedVolumeArgs`)
+e rodar o setup script de novo.
+
+## 22. Sessões wslc parecem isoladas por contexto de privilégio (admin vs usuário comum) (17/07/2026)
+
+Descoberto investigando por que `C:\Users\<user>\AppData\Local\wslc\sessions\`
+tinha **duas** pastas de sessão crescendo, cada uma com seu próprio
+`storage.vhdx` de dezenas de GB: `wslc-cli-admin-<user>` e
+`wslc-cli-<user>`. Branco confirmou que sempre roda terminal como
+Administrador — então algo mais precisava estar gerando a sessão não-admin.
+
+**Suspeita forte (não 100% confirmada por log direto, mas encaixa com todos
+os sintomas anteriores)**: o watchdog (item 13) roda via Agendador de
+Tarefas **sem elevação** (registrado assim de propósito, pra não precisar
+salvar senha de admin na tarefa). Se cada contexto de privilégio do Windows
+mantém sua própria sessão wslc isolada (imagens/containers/storage
+separados, sem visibilidade cruzada), o watchdog rodando sem elevação
+estaria olhando pra uma sessão **diferente** daquela onde o container
+`cerbero-gateway` realmente existe (criado pelo terminal admin de Branco).
+Isso explicaria retroativamente os `WSLC_E_CONTAINER_NOT_FOUND` intermitentes
+do item 13/18b, que nunca fizeram sentido completo com a teoria de
+"recriação de container" sozinha.
+
+**Fix**: `register-watchdog-task.ps1` agora registra a tarefa com
+`-RunLevel Highest` (via `New-ScheduledTaskPrincipal`), rodando elevado —
+mesmo contexto que Branco usa manualmente. Precisa **re-registrar a tarefa
+a partir de um PowerShell admin** pra pegar essa mudança:
+```powershell
+.\scripts\register-watchdog-task.ps1
+```
+
+**Efeito colateral pendente de limpeza**: a sessão `wslc-cli-<user>`
+(não-admin) deve ficar obsoleta depois desse fix — vale conferir depois de
+alguns dias sem crescer mais, e então avaliar removê-la
+(`wslc system session terminate`, exige olhar `wslc system session list`
+primeiro pra confirmar que nada mais depende dela).
+
+**Ferramentas relevantes descobertas nessa investigação**: `wslc system
+session list` (lista sessões ativas), `wslc system session terminate`
+(encerra uma), `wslc images` (lista imagens, tem `-f/--filter` — útil pra
+achar imagens penduradas/antigas antes de compactar os `.vhdx`). Não existe
+um `wslc system prune`/equivalente a `docker system prune` — limpeza de
+imagem velha é manual, via `wslc rmi`.
+
+## 23. Decisão de escopo: ambiente WSLC fica intacto; migração pra nuvem (OKE/k3s) é projeto independente (21/07/2026)
+
+Ao iniciar a avaliação de infraestrutura hospedada (Kubernetes gerenciado +
+Terraform + CI/CD), Branco confirmou explicitamente: o ambiente WSLC local
+(este repositório, os scripts `setup-cerbero-wslc.ps1`/`watchdog-cerbero.ps1`,
+os volumes nomeados, o container `cerbero-gateway`, e **todo o conteúdo deste
+arquivo de lições aprendidas**) deve permanecer **intocado** — não é uma
+migração que substitui o WSLC, é um segundo ambiente rodando em paralelo.
+
+**Motivo**: o WSLC continua sendo o ambiente de referência/produção enquanto
+o Kubernetes hospedado (cluster OKE `olympus`, criado em 21/07/2026 na Oracle
+Cloud, Always Free — ver decisão de provider/região no histórico da
+conversa) é avaliado como experimento separado. Nenhum aprendizado do WSLC
+deixa de valer; nenhum script deste projeto deve ser alterado por causa do
+trabalho de nuvem.
+
+**Regra de separação prática**:
+
+1. **Pasta separada**: o código do novo projeto (Terraform, manifests/Helm,
+   pipeline de CI/CD) vive numa pasta própria, fora de
+   `C:\wslc\projects\cerbero` — nunca dentro deste repositório. Local exato a
+   definir com Branco (ver próximo passo pendente).
+2. **Documentação separada**: o novo projeto mantém seu próprio arquivo de
+   lições aprendidas / README — não acrescentar seções sobre Kubernetes,
+   Terraform, Oracle Cloud ou Vultr neste arquivo daqui pra frente. Esta
+   seção 23 é a única exceção, registrando a decisão de separação em si.
+3. **Sem dependência de código**: nenhum script do projeto novo deve
+   referenciar caminhos deste repositório (mesmo padrão de independência já
+   adotado entre Cerbero/Hermes na seção 17 — duplicar um pouco de código é
+   aceitável, acoplamento entre pacotes não é).
+4. **Ambientes de execução podem divergir**: a continuidade do trabalho de
+   nuvem (Terraform, `kubectl`, pipeline) pode passar a rodar via Claude Code
+   direto no terminal do host (em vez desta sessão Cowork), justamente para
+   ganhar execução direta de `git`/`terraform`/`wslc` sem o relé de
+   copiar/colar que este projeto precisou usar o tempo todo (ver itens 15 e
+   18). Isso não afeta a regra de separação acima — só muda **onde** o
+   trabalho do projeto novo é feito, não o que acontece com o WSLC.
 
 ## Referências usadas
 
