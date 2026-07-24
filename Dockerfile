@@ -56,6 +56,20 @@ RUN curl -sL "https://github.com/openclaw/gogcli/releases/download/v0.34.1/gogcl
     && chmod +x /usr/local/bin/gog
 
 # -----------------------------------------------------------------------------
+# zoho-mail - CLI caseiro pra API do Zoho Mail (contato@ecomciencia.com),
+# fonte em scripts/zoho-mail.sh. Nao existe um CLI oficial tipo o gogcli
+# pro Zoho, entao escrevemos um wrapper fino em cima de curl+jq (ja
+# instalados acima) - sem dependencia nova. Credenciais (client id/
+# secret/refresh token/account id) vem 100% de env vars (Secret
+# cerbero-env), nunca hardcoded. Renova o access token a cada chamada
+# (expira em 1h) via refresh_token - simples e robusto, sem cache pra
+# estragar. Endpoints conferidos na documentacao oficial (mail.zoho.com/
+# api, nao www.zohoapis.com - sao dominios diferentes mesmo pra mesma
+# conta) em 24/07/2026, ver https://www.zoho.com/mail/help/api/.
+COPY scripts/zoho-mail.sh /usr/local/bin/zoho-mail
+RUN chmod +x /usr/local/bin/zoho-mail
+
+# -----------------------------------------------------------------------------
 # Renomeia o usuario nao-root da imagem oficial (node, uid/gid 1000) para
 # "cerbero" - o nome do projeto/agente. Mantemos o mesmo uid/gid 1000 de
 # proposito: e o que os bind mounts do host devem ter (chown -R 1000:1000 ...),

@@ -50,6 +50,10 @@ jobs:
             --from-literal=GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
             --from-literal=OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
             --from-literal=HERMES_API_KEY="${{ secrets.HERMES_API_KEY }}" \
+            --from-literal=ZOHO_CLIENT_ID="${{ secrets.ZOHO_CLIENT_ID }}" \
+            --from-literal=ZOHO_CLIENT_SECRET="${{ secrets.ZOHO_CLIENT_SECRET }}" \
+            --from-literal=ZOHO_REFRESH_TOKEN="${{ secrets.ZOHO_REFRESH_TOKEN }}" \
+            --from-literal=ZOHO_ACCOUNT_ID="${{ secrets.ZOHO_ACCOUNT_ID }}" \
             --from-literal=OPENCLAW_GATEWAY_TOKEN="${{ secrets.OPENCLAW_GATEWAY_TOKEN }}" \
             --from-literal=GOG_KEYRING_PASSWORD="${{ secrets.GOG_KEYRING_PASSWORD }}" \
             --dry-run=client -o yaml | kubectl apply -f -
