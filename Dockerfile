@@ -40,6 +40,22 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
+# gog (Google Workspace CLI, github.com/openclaw/gogcli) - usado pro scan de
+# e-mail/agenda nos crons de briefing/wrap-up. Na era WSLC isso era instalado
+# em runtime via bootstrap-gog.sh (chamado pelo setup-cerbero-wslc.ps1) porque
+# o volume que guardava o binario baixado podia sumir entre rebuilds do
+# ambiente local. Migrado pro k3s, o binario passa a vir DENTRO da imagem
+# (mesma logica do plugin WhatsApp abaixo: falha cedo e visivelmente no build
+# em vez de depender de download em runtime). Versao pinada de proposito -
+# nunca "latest" (ver historico de dor com ghcr.io/openclaw/openclaw:latest
+# ficando desalinhado do resto do sistema). Pra atualizar, trocar o numero da
+# versao e a URL do release em https://github.com/openclaw/gogcli/releases.
+RUN curl -sL "https://github.com/openclaw/gogcli/releases/download/v0.34.1/gogcli_0.34.1_linux_amd64.tar.gz" \
+    | tar xz -C /tmp/ \
+    && mv /tmp/gog /usr/local/bin/gog \
+    && chmod +x /usr/local/bin/gog
+
+# -----------------------------------------------------------------------------
 # Renomeia o usuario nao-root da imagem oficial (node, uid/gid 1000) para
 # "cerbero" - o nome do projeto/agente. Mantemos o mesmo uid/gid 1000 de
 # proposito: e o que os bind mounts do host devem ter (chown -R 1000:1000 ...),
