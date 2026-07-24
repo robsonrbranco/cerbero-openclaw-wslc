@@ -82,6 +82,32 @@ cmd_draft() {
     -d "$payload"
 }
 
+# cmd_send: envia e-mail de verdade (mode:"send", nao rascunho).
+# Uso restrito a remetentes especiais com autonomia explicita aprovada em
+# MEMORY.md (ex.: raquelprosadecastro@gmail.com) -- ver AGENTS.md "Rascunho
+# de E-mail": para qualquer outro destinatario, o envio continua sendo
+# SEMPRE acao humana (usar cmd_draft).
+cmd_send() {
+  local to="" subject="" body="" cc=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --to) to="$2"; shift ;;
+      --subject) subject="$2"; shift ;;
+      --body) body="$2"; shift ;;
+      --cc) cc="$2"; shift ;;
+    esac
+    shift
+  done
+  local token; token=$(_access_token)
+  local payload
+  payload=$(jq -n --arg to "$to" --arg subj "$subject" --arg body "$body" --arg cc "$cc" \
+    '{mode:"send", fromAddress:"contato@ecomciencia.com", toAddress:$to, subject:$subj, content:$body} + (if $cc != "" then {ccAddress:$cc} else {} end)')
+  curl -s -X POST "${ZOHO_MAIL_API}/accounts/${ZOHO_ACCOUNT_ID}/messages" \
+    -H "Authorization: Zoho-oauthtoken ${token}" \
+    -H "Content-Type: application/json" \
+    -d "$payload"
+}
+
 _require_env
 
 case "${1:-}" in
@@ -89,5 +115,6 @@ case "${1:-}" in
   list) shift; cmd_list "$@" ;;
   read) shift; cmd_read "$@" ;;
   draft) shift; cmd_draft "$@" ;;
-  *) echo "uso: zoho-mail {folders|list [--unread] [--limit N] [--folder Nome]|read <folderId> <messageId>|draft --to X --subject Y --body Z [--cc W]}" >&2; exit 1 ;;
+  send) shift; cmd_send "$@" ;;
+  *) echo "uso: zoho-mail {folders|list [--unread] [--limit N] [--folder Nome]|read <folderId> <messageId>|draft --to X --subject Y --body Z [--cc W]|send --to X --subject Y --body Z [--cc W]}" >&2; exit 1 ;;
 esac
