@@ -1,0 +1,55 @@
+{
+  agents: {
+    defaults: {
+      models: {
+        "deepseek/deepseek-v4-flash": { alias: "V4 Flash" },
+        "google/gemini-3.5-flash": { alias: "3.5 Flash" },
+        "anthropic/claude-haiku-4-5": { alias: "Haiku 4.5" },
+        "google/gemini-3.1-pro-preview": { alias: "3.1 Pro" },
+        "anthropic/claude-sonnet-4-6": { alias: "Sonnet 4.6" },
+        // Refs reais da Anthropic/Google que nao aparecem em "models list
+        // --all" (catalogo estatico embutido no plugin esta desatualizado),
+        // mas funcionam via API ao vivo - ver docs.openclaw.ai/providers/anthropic
+        // e /providers/google. Nao mexem no primary/fallback configurado acima.
+        "anthropic/claude-opus-4-8": { alias: "Opus 4.8" },
+        "anthropic/claude-fable-5": { alias: "Fable 5" },
+        "anthropic/claude-sonnet-5": { alias: "Sonnet 5" },
+        "google/gemini-3.1-flash-lite": { alias: "3.1 Flash-Lite" },
+      },
+    },
+  },
+  gateway: {
+    bind: "lan",
+    controlUi: {
+      // "" entra aqui pra permitir acessar o Control UI pelo
+      // nome configuravel (ver .PARAMETER Hostname) - ex.: depois de rodar
+      // scripts/add-hosts-entries.ps1, ou quando -Hostname vira um dominio
+      // real numa migracao pra nuvem - sem precisar editar este JSON5 na mao.
+      //
+      // A variante "cerbero-gateway.localhost" TAMBEM entra aqui de proposito: o
+      // navegador so trata como "contexto seguro" (exigido pras APIs de
+      // device identity do Control UI) http://localhost, http://127.0.0.1,
+      // ou qualquer nome terminando em ".localhost" - um hostname comum tipo
+      // "cerbero-gateway" nunca se qualifica, mesmo resolvendo pra 127.0.0.1
+      // via hosts file (erro "control ui requires device identity"). Ver
+      // LICOES-APRENDIDAS.md.
+      allowedOrigins: ["http://localhost:18789", "http://127.0.0.1:18789", "http://cerbero-gateway:18789", "http://cerbero-gateway.localhost:18789"],
+    },
+  },
+  env: {
+    OPENCLAW_DISABLE_BONJOUR: "1",
+  },
+  channels: {
+    whatsapp: {
+      dmPolicy: "allowlist",
+      allowFrom: ["+5521995256856"],
+      selfChatMode: true,
+      groupPolicy: "disabled",
+      sendReadReceipts: true,
+      reactionLevel: "minimal",
+    },
+  },
+  plugins: {
+    allow: ["whatsapp", "deepseek"],
+  },
+}

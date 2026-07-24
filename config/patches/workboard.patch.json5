@@ -1,0 +1,6 @@
+{
+  plugins: {
+    allow: ["whatsapp", "deepseek", "workboard"],
+  },
+}
+

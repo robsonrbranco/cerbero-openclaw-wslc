@@ -1,0 +1,23 @@
+{
+  models: {
+    providers: {
+      google: {
+        models: [
+          { id: "gemini-3.5-flash", name: "gemini-3.5-flash" },
+          { id: "gemini-3.1-pro-preview", name: "gemini-3.1-pro-preview" },
+          { id: "gemini-3.1-flash-lite", name: "gemini-3.1-flash-lite" },
+        ],
+      },
+      anthropic: {
+        models: [
+          { id: "claude-haiku-4-5", name: "claude-haiku-4-5" },
+          { id: "claude-sonnet-4-6", name: "claude-sonnet-4-6" },
+          { id: "claude-opus-4-8", name: "claude-opus-4-8" },
+          { id: "claude-fable-5", name: "claude-fable-5" },
+          { id: "claude-sonnet-5", name: "claude-sonnet-5" },
+        ],
+      },
+    },
+  },
+}
+

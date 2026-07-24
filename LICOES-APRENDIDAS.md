@@ -793,6 +793,55 @@ trabalho de nuvem.
    18). Isso não afeta a regra de separação acima — só muda **onde** o
    trabalho do projeto novo é feito, não o que acontece com o WSLC.
 
+## 24. Mudanças de config aplicadas direto no pod (k3s) — patches salvos no repo (23-24/07/2026)
+
+A seção 23 dizia pra não acrescentar mais nada sobre Kubernetes aqui — essa
+decisão de separação foi **revertida** em 23/07/2026 (Branco confirmou
+explicitamente): o ambiente WSLC foi migrado de vez pro cluster k3s
+(`olympus-k3s`, Hetzner), não é mais um experimento paralelo. O repositório
+`infra-olympus` continua sendo dono da camada de cluster/DNS/Terraform, mas
+o que afeta o Cerbero especificamente (config, plugins, modelos) fica
+documentado aqui.
+
+**Todo `openclaw.json` roda inteiramente fora do git** — vive no PVC
+`cerbero-data` (`/home/cerbero/.openclaw/openclaw.json`), editado em
+produção via `openclaw config patch --file` (não `config set` — ver seção
+sobre bugs de marshalling do PowerShell mais abaixo/em memória do Claude
+Code). Isso significa que toda mudança de config feita direto no pod
+**não tem histórico em lugar nenhum por padrão** — some se o PVC for
+perdido. Passamos a salvar cada patch aplicado em `config/patches/` neste
+repo, como registro (não são reaplicados automaticamente, são só
+documentação do que foi feito e por quê):
+
+| Arquivo | O que faz | Quando |
+|---|---|---|
+| `bootstrap.patch.json5` | Config inicial do bootstrap WSLC (aliases, allowedOrigins, whatsapp, plugins.allow) — herdado da era anterior à migração | 19/07/2026 |
+| `origins.patch.json5` | Adiciona `https://cerbero.ecomciencia.com` a `gateway.controlUi.allowedOrigins` — sem isso o Control UI recusava a origem pós-migração ("Origem do navegador não permitida") | 23/07/2026 |
+| `models.patch.json5` | Registra modelos Google/Anthropic em `models.providers.<provider>.models[]` — estavam citados em `agents.defaults.models` (fallback) sem entrada correspondente, causando `Unknown model` | 23/07/2026 |
+| `openai_models.patch.json5` | Registra os 4 modelos OpenAI (`gpt-5.4-pro/mini`, `gpt-5.4`, `o4-mini`) com specs reais (contexto/custo/reasoning), verificadas contra a documentação oficial antes de aplicar | 23/07/2026 |
+| `aliases.patch.json5` | Renomeia os 14 aliases pro padrão `<Provedor> <Modelo> <Variante>` (ex.: "V4 Flash" → "DeepSeek V4 Flash") — só Anthropic/OpenAI eram óbvios antes, DeepSeek/Gemini ficavam ambíguos | 23/07/2026 |
+| `workboard.patch.json5` | Adiciona `workboard` ao allowlist `plugins.allow` e habilita o plugin (dashboard de issues/sessões) | 23/07/2026 |
+
+**Outras mudanças de estado que não são arquivo de patch** (pra registro,
+não têm artefato pra commitar):
+- Auth de modelo (Anthropic/DeepSeek/Google/OpenAI) gravada no auth store
+  SQLite via `models auth paste-api-key` — env var sozinha não é confiável
+  em runtime real (`Shell env: off`), só o diagnóstico mostra como
+  disponível.
+- `gog` (Google Workspace CLI): binário voltou a viver **dentro da
+  imagem** (`Dockerfile`, não mais bootstrap manual) — essa parte já é
+  git-tracked. O OAuth (client credentials + token do usuário) fica só no
+  PVC (`state/gogcli/`), correto ficar de fora do git.
+
+**Namespace k8s renomeado de `wslc` pra `olympus`** (24/07/2026): o nome
+"wslc" não fazia mais sentido tecnicamente depois da migração completa pro
+k3s — ficou só como resquício confuso em comandos/documentação. Dados
+migrados via cópia direta no disco do node (SSH), não via `kubectl cp`
+(instável pra payloads grandes nessa sessão). Manifests (`k8s/cerbero.yaml`)
+e workflow (`deploy.yml`) atualizados. O nome deste repositório em si
+(`cerbero-openclaw-wslc`) não foi alterado — é uma decisão separada, não
+tomada nesta sessão.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,

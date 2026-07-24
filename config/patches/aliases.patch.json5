@@ -1,0 +1,23 @@
+{
+  agents: {
+    defaults: {
+      models: {
+        "deepseek/deepseek-v4-flash": { alias: "DeepSeek V4 Flash" },
+        "deepseek/deepseek-v4-pro": { alias: "DeepSeek V4 Pro" },
+        "google/gemini-3.1-pro-preview": { alias: "Gemini 3.1 Pro" },
+        "google/gemini-3.5-flash": { alias: "Gemini 3.5 Flash" },
+        "google/gemini-3.1-flash-lite": { alias: "Gemini 3.1 Flash-Lite" },
+        "anthropic/claude-haiku-4-5": { alias: "Claude Haiku 4.5" },
+        "anthropic/claude-sonnet-4-6": { alias: "Claude Sonnet 4.6" },
+        "anthropic/claude-sonnet-5": { alias: "Claude Sonnet 5" },
+        "anthropic/claude-opus-4-8": { alias: "Claude Opus 4.8" },
+        "anthropic/claude-fable-5": { alias: "Claude Fable 5" },
+        "openai/gpt-5.4": { alias: "OpenAI GPT 5.4" },
+        "openai/gpt-5.4-mini": { alias: "OpenAI GPT 5.4 Mini" },
+        "openai/gpt-5.4-pro": { alias: "OpenAI GPT 5.4 Pro" },
+        "openai/o4-mini": { alias: "OpenAI O4 Mini" },
+      },
+    },
+  },
+}
+

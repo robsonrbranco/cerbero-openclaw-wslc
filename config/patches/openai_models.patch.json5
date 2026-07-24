@@ -1,0 +1,51 @@
+{
+  models: {
+    providers: {
+      openai: {
+        models: [
+          {
+            id: "gpt-5.4-pro",
+            name: "GPT 5.4 Pro",
+            reasoning: true,
+            input: ["text"],
+            cost: { input: 30.00, output: 180.00, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 1050000,
+            maxTokens: 128000,
+            compat: { supportsReasoningEffort: true, supportsUsageInStreaming: true, maxTokensField: "max_tokens" },
+          },
+          {
+            id: "gpt-5.4",
+            name: "GPT 5.4",
+            reasoning: true,
+            input: ["text"],
+            cost: { input: 2.50, output: 15.00, cacheRead: 0.25, cacheWrite: 0 },
+            contextWindow: 1050000,
+            maxTokens: 128000,
+            compat: { supportsReasoningEffort: true, supportsUsageInStreaming: true, maxTokensField: "max_tokens" },
+          },
+          {
+            id: "gpt-5.4-mini",
+            name: "GPT 5.4 Mini",
+            reasoning: true,
+            input: ["text"],
+            cost: { input: 0.75, output: 4.50, cacheRead: 0.075, cacheWrite: 0 },
+            contextWindow: 400000,
+            maxTokens: 128000,
+            compat: { supportsReasoningEffort: true, supportsUsageInStreaming: true, maxTokensField: "max_tokens" },
+          },
+          {
+            id: "o4-mini",
+            name: "O4 Mini",
+            reasoning: true,
+            input: ["text"],
+            cost: { input: 4.00, output: 16.00, cacheRead: 1.00, cacheWrite: 0 },
+            contextWindow: 200000,
+            maxTokens: 100000,
+            compat: { supportsReasoningEffort: true, supportsUsageInStreaming: true, maxTokensField: "max_tokens" },
+          },
+        ],
+      },
+    },
+  },
+}
+
