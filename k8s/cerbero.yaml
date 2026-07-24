@@ -1,14 +1,14 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: wslc
+  name: olympus
 
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: cerbero-config
-  namespace: wslc
+  namespace: olympus
 data:
   TERM: "xterm-256color"
   OPENCLAW_HOME: "/home/cerbero"
@@ -34,7 +34,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: cerbero-data
-  namespace: wslc
+  namespace: olympus
 spec:
   accessModes: ["ReadWriteOnce"]
   resources:
@@ -46,7 +46,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: cerbero-secrets
-  namespace: wslc
+  namespace: olympus
 spec:
   accessModes: ["ReadWriteOnce"]
   resources:
@@ -58,7 +58,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: cerbero-projects
-  namespace: wslc
+  namespace: olympus
 spec:
   accessModes: ["ReadWriteOnce"]
   resources:
@@ -70,7 +70,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: cerbero
-  namespace: wslc
+  namespace: olympus
 spec:
   replicas: 1
   strategy:
@@ -168,7 +168,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: cerbero
-  namespace: wslc
+  namespace: olympus
 spec:
   selector:
     app: cerbero
@@ -181,7 +181,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: cerbero
-  namespace: wslc
+  namespace: olympus
 spec:
   rules:
     - host: cerbero.ecomciencia.com
