@@ -1,0 +1,22 @@
+{
+  models: {
+    providers: {
+      anthropic: {
+        models: [
+          { id: "claude-haiku-4-5", name: "claude-haiku-4-5", api: "anthropic-messages", contextWindow: 200000, maxTokens: 64000 },
+          { id: "claude-sonnet-4-6", name: "claude-sonnet-4-6", api: "anthropic-messages", contextWindow: 200000, maxTokens: 64000 },
+          { id: "claude-opus-4-8", name: "claude-opus-4-8", api: "anthropic-messages", contextWindow: 200000, maxTokens: 128000 },
+          { id: "claude-fable-5", name: "claude-fable-5", api: "anthropic-messages", contextWindow: 200000, maxTokens: 64000 },
+          { id: "claude-sonnet-5", name: "claude-sonnet-5", api: "anthropic-messages", contextWindow: 200000, maxTokens: 64000 },
+        ],
+      },
+      google: {
+        models: [
+          { id: "gemini-3.5-flash", name: "gemini-3.5-flash", api: "google-generative-ai" },
+          { id: "gemini-3.1-pro-preview", name: "gemini-3.1-pro-preview", api: "google-generative-ai" },
+          { id: "gemini-3.1-flash-lite", name: "gemini-3.1-flash-lite", api: "google-generative-ai" },
+        ],
+      },
+    },
+  },
+}

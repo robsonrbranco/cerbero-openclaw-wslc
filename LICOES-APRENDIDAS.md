@@ -821,6 +821,7 @@ documentação do que foi feito e por quê):
 | `openai_models.patch.json5` | Registra os 4 modelos OpenAI (`gpt-5.4-pro/mini`, `gpt-5.4`, `o4-mini`) com specs reais (contexto/custo/reasoning), verificadas contra a documentação oficial antes de aplicar | 23/07/2026 |
 | `aliases.patch.json5` | Renomeia os 14 aliases pro padrão `<Provedor> <Modelo> <Variante>` (ex.: "V4 Flash" → "DeepSeek V4 Flash") — só Anthropic/OpenAI eram óbvios antes, DeepSeek/Gemini ficavam ambíguos | 23/07/2026 |
 | `workboard.patch.json5` | Adiciona `workboard` ao allowlist `plugins.allow` e habilita o plugin (dashboard de issues/sessões) | 23/07/2026 |
+| `model_api_fix.patch.json5` | Corrige bug real deixado pelo `models.patch.json5` de 23/07: sem `api` explícito, Google/Anthropic caíam no transporte padrão `openai-responses` (chave certa, endpoint errado, erro 401 confuso "Incorrect API key... platform.openai.com" mesmo com a chave da Anthropic/Google). Correção: `api: "anthropic-messages"` pro Anthropic (+ `maxTokens` positivo, exigido por esse transporte) e `api: "google-generative-ai"` pro Google — valores conferidos direto no `openclaw.plugin.json` de cada extensão e na mensagem de erro de validação do próprio `config patch` (que lista o enum completo de valores aceitos) | 24/07/2026 |
 
 **Outras mudanças de estado que não são arquivo de patch** (pra registro,
 não têm artefato pra commitar):
