@@ -3,6 +3,7 @@ set -euo pipefail
 
 ZOHO_ACCOUNTS_URL="https://accounts.zoho.com"
 ZOHO_MAIL_API="https://mail.zoho.com/api"
+ZOHO_SEND_ALLOWED_TO="raquelprosadecastro@gmail.com"
 
 _require_env() {
   for v in ZOHO_CLIENT_ID ZOHO_CLIENT_SECRET ZOHO_REFRESH_TOKEN ZOHO_ACCOUNT_ID; do
@@ -98,6 +99,10 @@ cmd_send() {
     esac
     shift
   done
+  if [ "$to" != "$ZOHO_SEND_ALLOWED_TO" ]; then
+    echo "erro: send restrito a ${ZOHO_SEND_ALLOWED_TO} -- para qualquer outro destinatario use 'draft'" >&2
+    exit 1
+  fi
   local token; token=$(_access_token)
   local payload
   payload=$(jq -n --arg to "$to" --arg subj "$subject" --arg body "$body" --arg cc "$cc" \
