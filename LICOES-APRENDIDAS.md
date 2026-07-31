@@ -912,6 +912,85 @@ decisão de não fazer nada, conta como quebra da regra.
 "não fazer nada" e "não escrever nada" como a mesma coisa no prompt —
 nunca assumir que o modelo vai inferir isso sozinho.
 
+**ATUALIZAÇÃO (30/07/2026): o fix acima não funcionou de verdade.**
+Confirmado pelo histórico real de execuções nos dias seguintes: o modelo
+continuou escrevendo uma frase de fechamento em praticamente 100% das
+vezes ("Nada relevante. Turno encerrado sem notificação.", "Regra 1
+aplicada — nenhuma notificação.", etc.) apesar da instrução explícita
+"não escreva nenhum texto". Toda essa frase, sendo texto não-vazio,
+continuava sendo entregue via `announce` (`delivered: true`,
+`fallbackUsed: true` em todo run "ok" do histórico). **Causa raiz real**:
+não é falta de clareza no prompt — é uma limitação de instruction-following
+do modelo (`deepseek-v4-flash`), que aparentemente não consegue/não
+costuma produzir um turno final com texto genuinamente vazio, mesmo
+quando isso é pedido de forma explícita e repetida.
+
+**Correção estrutural (a que funcionou de verdade)**: parar de depender do
+texto final pra decidir o que é entregue. `openclaw cron edit <id>
+--no-deliver` desliga o fallback `announce` por completo (delivery vira
+`none` — confirmar com `cron show`). O prompt passa a instruir o agente a
+notificar Branco chamando **explicitamente**
+`openclaw message send --channel whatsapp --target <numero> --message
+"..."` (via `exec`, já que essa ferramenta está no `toolsAllow`) só nos
+casos que realmente importam (regras 2-4) — regra 1 vira simplesmente "não
+rode esse comando". Resultado: o modelo pode narrar livremente o que
+verificou (isso não importa mais), porque só uma chamada explícita da
+ferramenta de envio entrega alguma coisa. Confirmado por execução manual
+(`cron run <id>`) pós-fix: `deliveryStatus: not-requested`,
+`fallbackUsed: false`.
+
+**Why (atualização):** a lição de fundo mudou — não adianta pedir pro
+modelo "não fazer/escrever nada" quando o mecanismo de entrega já está
+configurado pra entregar qualquer coisa por padrão (opt-out via prompt).
+O jeito robusto é inverter: entrega desligada por padrão (`--no-deliver`),
+e a notificação vira uma ação explícita que o modelo só toma quando decide
+que é o caso (opt-in via tool call) — não depende de instruction-following
+perfeito pra funcionar.
+
+**How to apply (atualização):** em qualquer cron/agente que só deve
+notificar condicionalmente, preferir sempre opt-in explícito (tool
+call/comando dedicado) sobre opt-out via prompt (pedir pra não escrever
+nada) — o segundo é estruturalmente frágil contra qualquer modelo que narre
+decisões em texto, não é uma questão de prompt melhor escrito.
+
+## 27. Zoho OAuth rate-limit — script pede token novo a cada chamada, sem cache (30/07/2026)
+
+Investigando por que o cron `zoho-mail-scan` estava com `status: error` em
+várias execuções recentes (mensagens variadas: `zoho-mail list ... failed`,
+`process action=poll ... failed`, script de debug de token falhando),
+encontrei a causa raiz testando `_access_token()` (função interna do
+`scripts/zoho-mail.sh`) direto: a API do Zoho respondeu
+`{"error":"Access Denied","error_description":"You have made too many
+requests continuously. Please try again after some time."}` — rate limit
+no endpoint de refresh de OAuth (`accounts.zoho.com/oauth/v2/token`), não
+credencial revogada/expirada.
+
+**Causa estrutural**: `zoho-mail.sh` chama `_access_token()` (POST novo
+pro endpoint OAuth, gastando uma "requisição de refresh") em **toda**
+subchamada da API — e `cmd_list` chama duas vezes só nela (uma dentro de
+`_folder_id`, outra direta). Isso foi uma decisão deliberada (ver comentário
+no Dockerfile: "renova a cada chamada... simples e robusto, sem cache pra
+estragar"), mas fica frágil quando o volume de chamadas sobe — cron rodando
+de 30 em 30 min já gera bastante tráfego sozinho, e testes manuais
+adicionais (como os feitos pra diagnosticar o problema #26 nesta mesma
+sessão) empurram pro limite.
+
+**Não corrigido ainda** (fora do escopo do que foi pedido nesta sessão) —
+só diagnosticado e documentado. Se voltar a acontecer, a correção
+correta é cachear o access token localmente (arquivo com timestamp de
+expiração, já que o token dura ~1h) em vez de pedir um novo em toda
+chamada, reduzindo pra no máximo ~1 refresh/hora independente de quantas
+operações rodarem nesse meio tempo.
+
+**Why:** explica os erros intermitentes do cron nos últimos dias sem ser o
+problema #26 (que é sobre entrega indevida, não sobre falha de execução) —
+são dois bugs distintos que aconteceram no mesmo período.
+
+**How to apply:** antes de assumir que uma falha do `zoho-mail` é
+credencial quebrada, checar a mensagem de erro real da API (não só o
+"failed" genérico do log do cron) — rate limit tem mensagem própria e não
+precisa de troca de credencial nenhuma, só esperar.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
