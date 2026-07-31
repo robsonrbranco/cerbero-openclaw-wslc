@@ -14,13 +14,49 @@ _require_env() {
   done
 }
 
+# Cacheia o access token (dura ~1h do lado do Zoho) num arquivo no volume
+# persistente, evitando renovar a cada chamada -- renovar demais esbarra
+# no rate-limit do endpoint OAuth do Zoho (ver LICOES-APRENDIDAS.md item 27).
+_token_cache_file() {
+  echo "${OPENCLAW_STATE_DIR:-/home/cerbero/.openclaw}/zoho-token-cache.json"
+}
+
 _access_token() {
-  curl -s -X POST "${ZOHO_ACCOUNTS_URL}/oauth/v2/token" \
+  local cache; cache=$(_token_cache_file)
+  local now; now=$(date +%s)
+
+  if [ -f "$cache" ]; then
+    local cached_token cached_exp
+    cached_token=$(jq -r '.access_token // empty' "$cache" 2>/dev/null || true)
+    cached_exp=$(jq -r '.expires_at // 0' "$cache" 2>/dev/null || echo 0)
+    # Margem de 60s antes do vencimento real, pra nunca usar um token que
+    # expira no meio de uma chamada em andamento.
+    if [ -n "$cached_token" ] && [ "$cached_exp" -gt "$((now + 60))" ] 2>/dev/null; then
+      echo "$cached_token"
+      return 0
+    fi
+  fi
+
+  local resp
+  resp=$(curl -s -X POST "${ZOHO_ACCOUNTS_URL}/oauth/v2/token" \
     --data-urlencode "grant_type=refresh_token" \
     --data-urlencode "client_id=${ZOHO_CLIENT_ID}" \
     --data-urlencode "client_secret=${ZOHO_CLIENT_SECRET}" \
-    --data-urlencode "refresh_token=${ZOHO_REFRESH_TOKEN}" \
-    | jq -r '.access_token'
+    --data-urlencode "refresh_token=${ZOHO_REFRESH_TOKEN}")
+
+  local token expires_in
+  token=$(echo "$resp" | jq -r '.access_token // empty')
+  expires_in=$(echo "$resp" | jq -r '.expires_in // empty')
+
+  if [ -z "$token" ]; then
+    echo "erro: falha ao renovar token OAuth do Zoho -- $(echo "$resp" | jq -c '.' 2>/dev/null || echo "$resp")" >&2
+    exit 1
+  fi
+
+  local exp=$((now + ${expires_in:-3600}))
+  jq -n --arg t "$token" --argjson e "$exp" '{access_token:$t, expires_at:$e}' > "$cache" 2>/dev/null || true
+  chmod 600 "$cache" 2>/dev/null || true
+  echo "$token"
 }
 
 _folder_id() {
