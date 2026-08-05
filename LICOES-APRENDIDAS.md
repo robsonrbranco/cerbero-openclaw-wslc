@@ -991,6 +991,48 @@ credencial quebrada, checar a mensagem de erro real da API (não só o
 "failed" genérico do log do cron) — rate limit tem mensagem própria e não
 precisa de troca de credencial nenhuma, só esperar.
 
+## 28. Conectando o Cerbero ao Hermes via MCP nativo, em vez de HTTP genérico (05/08/2026)
+
+O Cerbero já suporta MCP como **cliente** de verdade (`openclaw mcp
+add/probe/status/tools/serve`, não é gambiarra) — confirmado direto no
+`--help`. O n8n 2.33+ (Hermes) suporta MCP como **servidor** via
+`Settings → Instance-level MCP` (feature "Preview"), expondo a própria
+API de builder de workflows (criar, testar, publicar, rodar, buscar
+workflows/execuções/credenciais) como ferramentas MCP — 34 tools mesmo
+com o Hermes ainda vazio (zero workflows criados). Workflows publicados
+no futuro, se marcados como "exposed" nas configurações de MCP do n8n,
+aparecem como tools adicionais, chamáveis diretamente.
+
+**Conexão configurada**: `openclaw mcp add hermes --url
+http://hermes:5678/mcp-server/http --transport streamable-http --header
+"Authorization=Bearer <token>"` — usando o **endereço interno do
+cluster** (`hermes:5678`, DNS curto do Service, mesma namespace
+`olympus`), não o domínio público `hermes.ecomciencia.com`. Motivo: o
+domínio público está atrás do Cloudflare Access (login por e-mail) —
+uma conexão MCP servidor-a-servidor bateria na tela de login do
+Cloudflare antes mesmo de chegar no n8n, a menos que se configure um
+Service Token do Access especificamente pra isso. Indo direto pelo
+Service interno, evita esse problema por completo — mais rápido e não
+depende de nada além do próprio cluster.
+
+**Token de acesso**: gerado uma única vez na tela "Connect a client" do
+n8n (aba "API key", não OAuth) — é um JWT que só é mostrado naquela
+hora, não fica recuperável depois pela UI. Se precisar reconectar do
+zero (token perdido, ou trocado), tem que gerar um novo pela mesma tela.
+
+**Why:** a alternativa (Cerbero chamando o Hermes via `exec`+`curl` pra
+API REST genérica) exigiria o agente saber a forma exata de cada
+endpoint do n8n; MCP já expõe isso como ferramentas tipadas e
+descobertas automaticamente (`mcp probe`), sem precisar ensinar o
+formato de cada chamada no prompt.
+
+**How to apply:** ao conectar dois apps do mesmo cluster via MCP (ou
+qualquer protocolo servidor-a-servidor), preferir sempre o Service
+interno do k8s (`<nome>.<namespace>.svc.cluster.local` ou o nome curto
+se estiver na mesma namespace) em vez do domínio público, especialmente
+se o domínio público estiver atrás de autenticação de borda (Cloudflare
+Access, etc.) pensada pra humano, não pra máquina.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
