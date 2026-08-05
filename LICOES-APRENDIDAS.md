@@ -1033,6 +1033,44 @@ se estiver na mesma namespace) em vez do domínio público, especialmente
 se o domínio público estiver atrás de autenticação de borda (Cloudflare
 Access, etc.) pensada pra humano, não pra máquina.
 
+## 29. Validação end-to-end do MCP Cerbero→Hermes: criar, rodar, apagar (05/08/2026)
+
+Depois de configurar a conexão (item 28), testei o ciclo completo pedindo
+pro próprio Cerbero usar as ferramentas MCP — não bastava a conexão
+"probar" com sucesso, precisava confirmar que o agente consegue de fato
+operar o Hermes fim a fim. Fluxo: pedi via `openclaw agent --agent main
+--message "..."` pra criar um workflow simples (Manual Trigger → Set),
+depois pra executar e reportar o resultado, depois pra remover.
+
+**Cada etapa foi conferida de forma independente** (não só confiando no
+resumo que o agente devolveu) via `n8n export:workflow --all` direto no
+pod do Hermes:
+- Criação: workflow apareceu no export, com `meta:
+  {"aiBuilderAssisted":true,"builderVariant":"mcp"}` — o próprio n8n
+  identifica e marca workflows construídos via MCP.
+- Execução: resultado do node Set bateu exatamente com o esperado
+  (`{"texto":"teste mcp ok"}`).
+- Remoção: o agente reportou ter "apagado", mas na real só arquivou
+  (`isArchived:true`) — **a API MCP do n8n não expõe delete físico de
+  workflow, só archive** (equivalente à lixeira). Pra exclusão
+  permanente de verdade, precisou ir na UI do Hermes (`Workflows → menu
+  de contexto → Delete → confirmar`) — e mesmo lá, workflows arquivados
+  não aparecem na lista padrão, precisa em "Filters" remover o filtro
+  que esconde arquivados antes de achar o item.
+
+**Why:** um agente reportando "sucesso" em texto não é prova de que a
+ação aconteceu do jeito esperado — nesse caso específico, "deletei"
+overstated o que a ferramenta MCP realmente faz (archive, não delete).
+Sem conferir direto na fonte, essa discrepância passaria despercebida.
+
+**How to apply:** ao validar qualquer integração MCP nova (ou qualquer
+ferramenta que um agente possa usar), rodar um teste real de ciclo
+completo (criar/ler/atualizar/remover, o que fizer sentido) e conferir
+o resultado direto na fonte de verdade (aqui, exportar do n8n via CLI),
+não só aceitar o resumo em texto do agente. Ferramentas MCP de terceiros
+podem ter limitações não-óbvias (como "delete" na real ser "archive")
+que só aparecem testando de verdade.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
