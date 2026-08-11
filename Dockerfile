@@ -56,6 +56,21 @@ RUN curl -sL "https://github.com/openclaw/gogcli/releases/download/v0.34.1/gogcl
     && chmod +x /usr/local/bin/gog
 
 # -----------------------------------------------------------------------------
+# wacli (WhatsApp CLI, github.com/openclaw/wacli) - segundo dispositivo
+# vinculado, usado SOMENTE para indexar e consultar o grupo de condicoes de voo
+# de Sampaio. Versao e SHA-256 ficam fixos para o build ser reproduzivel e nao
+# executar um artefato trocado no upstream. A sessao nao vive na imagem: o
+# manifest aponta WACLI_STORE_DIR para o PVC persistente cerbero-data.
+ARG WACLI_VERSION=0.16.0
+ARG WACLI_SHA256=65087d5fb398e5a20d21162e60f3ac56aed3dea36610bc5cec57f03d58344680
+RUN curl -fsSL -o /tmp/wacli.tar.gz \
+      "https://github.com/openclaw/wacli/releases/download/v${WACLI_VERSION}/wacli_${WACLI_VERSION}_linux_amd64.tar.gz" \
+    && echo "${WACLI_SHA256}  /tmp/wacli.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/wacli.tar.gz -C /tmp \
+    && install -m 0755 /tmp/wacli /usr/local/bin/wacli \
+    && rm -f /tmp/wacli.tar.gz /tmp/wacli
+
+# -----------------------------------------------------------------------------
 # zoho-mail - CLI caseiro pra API do Zoho Mail (contato@ecomciencia.com),
 # fonte em scripts/zoho-mail.sh. Nao existe um CLI oficial tipo o gogcli
 # pro Zoho, entao escrevemos um wrapper fino em cima de curl+jq (ja
@@ -67,7 +82,8 @@ RUN curl -sL "https://github.com/openclaw/gogcli/releases/download/v0.34.1/gogcl
 # api, nao www.zohoapis.com - sao dominios diferentes mesmo pra mesma
 # conta) em 24/07/2026, ver https://www.zoho.com/mail/help/api/.
 COPY scripts/zoho-mail.sh /usr/local/bin/zoho-mail
-RUN chmod +x /usr/local/bin/zoho-mail
+COPY scripts/wacli-sampaio.sh /usr/local/bin/wacli-sampaio
+RUN chmod +x /usr/local/bin/zoho-mail /usr/local/bin/wacli-sampaio
 
 # -----------------------------------------------------------------------------
 # Renomeia o usuario nao-root da imagem oficial (node, uid/gid 1000) para

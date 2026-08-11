@@ -18,6 +18,8 @@ data:
   OPENCLAW_WORKSPACE_DIR: "/home/cerbero/.openclaw/workspace"
   GOG_HOME: "/home/cerbero/.openclaw/state/gogcli"
   GOG_KEYRING_BACKEND: "file"
+  # Sessao/chaves e indice SQLite do wacli ficam no PVC, nunca na imagem.
+  WACLI_STORE_DIR: "/home/cerbero/.openclaw/state/wacli"
   PATH: "/home/cerbero/.openclaw/extensions:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   # O openclaw.json migrado foi escrito pela versao 2026.7.1, mas a imagem
   # ghcr.io/openclaw/openclaw:latest publicada ainda esta na 2026.6.34 (mesmo
@@ -143,6 +145,39 @@ spec:
             limits:
               cpu: 1000m
               memory: 2Gi
+        # Segundo dispositivo vinculado ao WhatsApp, isolado do plugin usado
+        # pelo gateway. Antes do primeiro QR code o loop apenas aguarda; uma
+        # falha de autenticacao/sync nunca derruba o container principal.
+        - name: wacli-sync
+          image: ghcr.io/robsonrbranco/cerbero-gateway:latest
+          envFrom:
+            - configMapRef:
+                name: cerbero-config
+          command:
+            - sh
+            - -c
+            - |
+              set -u
+              while true; do
+                if [ ! -f "${WACLI_STORE_DIR}/session.db" ]; then
+                  echo "wacli ainda nao pareado; aguardando session.db..."
+                  sleep 60
+                  continue
+                fi
+                echo "Iniciando sincronizacao wacli (se ainda nao pareado, aguardara novo ciclo)..."
+                wacli sync --follow || true
+                sleep 60
+              done
+          volumeMounts:
+            - name: data
+              mountPath: /home/cerbero/.openclaw
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
       volumes:
         - name: data
           persistentVolumeClaim:
