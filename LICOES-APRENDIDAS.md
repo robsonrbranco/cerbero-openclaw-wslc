@@ -1071,6 +1071,42 @@ não só aceitar o resumo em texto do agente. Ferramentas MCP de terceiros
 podem ter limitações não-óbvias (como "delete" na real ser "archive")
 que só aparecem testando de verdade.
 
+## 30. `tar -C /tmp` de um release de terceiro pode corromper o /tmp inteiro (11/08/2026)
+
+Ao adicionar o `wacli` (segundo dispositivo WhatsApp, pro boletim de
+condições de voo de Sampaio), o Dockerfile extraiu o tarball de release
+direto em `/tmp` (`tar -xzf wacli.tar.gz -C /tmp`) — o mesmo padrão já
+usado sem problema pro `gogcli`. Mas o tarball do `wacli` carrega uma
+entrada de diretório `.` empacotada com dono/permissão de build (uid
+501/grupo `staff`, típico de macOS). O GNU tar, ao ver essa entrada,
+aplica a permissão dela ao próprio diretório de destino — não só ao
+conteúdo. Resultado: `/tmp` inteiro virou `drwxr-xr-x` de propriedade
+`501:staff`, e o usuário não-root `cerbero` (uid 1000) parou de
+conseguir criar qualquer coisa em `/tmp` (`EACCES` no `mkdir
+/tmp/openclaw-1000` do próprio gateway na inicialização). O container
+buildou sem erro (o `RUN` completou normalmente) — só quebrou depois,
+no primeiro restart do pod em produção, com `CrashLoopBackOff` e 502
+no domínio público.
+
+**Why:** tarballs de terceiro nem sempre normalizam a entrada de
+diretório raiz ao empacotar — depende de como o autor rodou `tar czf`
+na hora do release. Extrair direto num diretório compartilhado e
+sensível como `/tmp` é uma aposta silenciosa: funciona até o dia em
+que o tarball da vez tiver essa entrada "envenenada", e o `docker
+build` não acusa nada (o `RUN` só falha se um comando dentro dele
+retornar erro, não se as permissões do sistema de arquivos mudarem de
+forma inesperada).
+
+**How to apply:** ao extrair qualquer tarball de terceiro num
+Dockerfile, NUNCA usar `-C /tmp` (ou qualquer diretório que outras
+camadas/processos dependam) direto — criar um subdiretório
+descartável só pra extração (`mkdir -p /tmp/<nome>-extract && tar -xzf
+... -C /tmp/<nome>-extract`), copiar só o binário que interessa, e
+apagar o subdiretório no fim do mesmo `RUN`. Se o padrão antigo
+(`gogcli`) continuar em uso, considerar migrar ele também por
+precaução, mesmo sem sintoma até agora — o fato de não ter quebrado
+ainda não prova que o tarball dele é seguro, só que ainda não mudou.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
