@@ -63,12 +63,21 @@ RUN curl -sL "https://github.com/openclaw/gogcli/releases/download/v0.34.1/gogcl
 # manifest aponta WACLI_STORE_DIR para o PVC persistente cerbero-data.
 ARG WACLI_VERSION=0.16.0
 ARG WACLI_SHA256=65087d5fb398e5a20d21162e60f3ac56aed3dea36610bc5cec57f03d58344680
-RUN curl -fsSL -o /tmp/wacli.tar.gz \
+# Extraimos num subdiretorio proprio (nao direto em /tmp): o tarball do wacli
+# empacota uma entrada de diretorio "." com dono/permissao de build (uid 501,
+# tipico de macOS) que o tar aplica ao proprio diretorio de destino - extrair
+# direto em /tmp deixava /tmp inteiro sem escrita pro usuario nao-root
+# "cerbero", derrubando o gateway com EACCES em qualquer mkdir de /tmp
+# (descoberto em produção em 11/08/2026). /tmp/wacli-extract e descartavel e
+# removido no fim do RUN, entao nao herda esse problema para o resto da imagem.
+RUN mkdir -p /tmp/wacli-extract \
+    && curl -fsSL -o /tmp/wacli.tar.gz \
       "https://github.com/openclaw/wacli/releases/download/v${WACLI_VERSION}/wacli_${WACLI_VERSION}_linux_amd64.tar.gz" \
     && echo "${WACLI_SHA256}  /tmp/wacli.tar.gz" | sha256sum -c - \
-    && tar -xzf /tmp/wacli.tar.gz -C /tmp \
-    && install -m 0755 /tmp/wacli /usr/local/bin/wacli \
-    && rm -f /tmp/wacli.tar.gz /tmp/wacli
+    && tar -xzf /tmp/wacli.tar.gz -C /tmp/wacli-extract \
+    && install -m 0755 /tmp/wacli-extract/wacli /usr/local/bin/wacli \
+    && rm -rf /tmp/wacli.tar.gz /tmp/wacli-extract \
+    && chmod 1777 /tmp
 
 # -----------------------------------------------------------------------------
 # zoho-mail - CLI caseiro pra API do Zoho Mail (contato@ecomciencia.com),
