@@ -92,7 +92,8 @@ RUN mkdir -p /tmp/wacli-extract \
 # conta) em 24/07/2026, ver https://www.zoho.com/mail/help/api/.
 COPY scripts/zoho-mail.sh /usr/local/bin/zoho-mail
 COPY scripts/wacli-sampaio.sh /usr/local/bin/wacli-sampaio
-RUN chmod +x /usr/local/bin/zoho-mail /usr/local/bin/wacli-sampaio
+COPY scripts/wacli-base.sh /usr/local/bin/wacli-base
+RUN chmod +x /usr/local/bin/zoho-mail /usr/local/bin/wacli-sampaio /usr/local/bin/wacli-base
 
 # -----------------------------------------------------------------------------
 # Renomeia o usuario nao-root da imagem oficial (node, uid/gid 1000) para
