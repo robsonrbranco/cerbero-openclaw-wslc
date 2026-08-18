@@ -6,7 +6,7 @@
           { id: "gemini-3.5-flash", name: "gemini-3.5-flash", api: "google-generative-ai", contextWindow: 200000, maxTokens: 8192 },
           { id: "gemini-3.1-pro-preview", name: "gemini-3.1-pro-preview", api: "google-generative-ai", contextWindow: 200000, maxTokens: 8192 },
           { id: "gemini-3.1-flash-lite", name: "gemini-3.1-flash-lite", api: "google-generative-ai", contextWindow: 200000, maxTokens: 8192 },
-          { id: "gemini-3.6-flash", name: "gemini-3.6-flash", api: "google-generative-ai", reasoning: true, input: ["text"], cost: { input: 1.50, output: 7.50, cacheRead: 0.15, cacheWrite: 0 }, contextWindow: 1000000, maxTokens: 64000 },
+          { id: "gemini-3.7-flash", name: "gemini-3.7-flash", api: "google-generative-ai", reasoning: true, input: ["text", "image"], cost: { input: 1.50, output: 7.50, cacheRead: 0.15, cacheWrite: 0 }, contextWindow: 1000000, maxTokens: 64000 },
         ],
       },
     },
@@ -14,7 +14,21 @@
   agents: {
     defaults: {
       models: {
-        "google/gemini-3.6-flash": { alias: "Gemini 3.6 Flash" },
+        "google/gemini-3.7-flash": { alias: "Gemini 3.7 Flash" },
+      },
+      model: {
+        fallbacks: [
+          "google/gemini-3.7-flash",
+        ],
+      },
+    },
+  },
+  plugins: {
+    google: {
+      config: {
+        webSearch: {
+          model: "gemini-3.7-flash",
+        },
       },
     },
   },
