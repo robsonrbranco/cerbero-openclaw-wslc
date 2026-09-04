@@ -1107,6 +1107,44 @@ apagar o subdiretório no fim do mesmo `RUN`. Se o padrão antigo
 precaução, mesmo sem sintoma até agora — o fato de não ter quebrado
 ainda não prova que o tarball dele é seguro, só que ainda não mudou.
 
+## 31. Upgrade pra OpenClaw 2026.9.1 passou a exigir `gateway.trustedProxies` (04/09/2026)
+
+Depois do upgrade de versão (item anterior de contexto:
+`feedback_openclaw_version_skew` na memória do Claude Code), o acesso
+via `https://cerbero.ecomciencia.com/` passou a devolver, pra qualquer
+requisição, um erro JSON em vez da UI:
+
+```json
+{"error":{"message":"Proxy client attribution is required. Configure
+gateway.trustedProxies narrowly and make the proxy overwrite or safely
+rebuild forwarded client headers.","type":"proxy_attribution_required"}}
+```
+
+Investigando o bundle (`ingress-attribution-*.js`, novo neste release),
+o gateway agora recusa por padrão qualquer requisição que chegue com
+cabeçalhos de proxy (`X-Forwarded-For` etc.) vindos de um IP que não
+esteja em `gateway.trustedProxies` — antes disso o roteamento
+Cloudflare → Traefik (ingress do k3s) → Service ClusterIP → pod
+funcionava sem essa checagem. Sem `trustedProxies` configurado
+(campo nunca existiu no `openclaw.json` do Cerbero até este upgrade),
+todo o tráfego passou a cair em `unattributable-proxy` e ser
+bloqueado.
+
+**Why:** é um endurecimento de segurança deliberado — sem essa
+checagem, um cliente malicioso poderia forjar `X-Forwarded-For` e se
+passar por outro IP pro rate-limit/allowlist do gateway. O preço é que
+qualquer deploy atrás de reverse proxy (é o nosso caso: Traefik do
+k3s) precisa declarar explicitamente em quem confiar.
+
+**How to apply:** `openclaw config set gateway.trustedProxies
+'["10.42.0.0/24"]' --strict-json` (aceita IP solto ou CIDR — usamos o
+CIDR do pod network do k3s de propósito, não o IP do pod do Traefik
+sozinho, porque esse IP muda a cada restart do Traefik e travaria tudo
+de novo) + `kubectl rollout restart deployment/cerbero` (a mudança só
+é lida na subida do gateway, não em runtime). Se o cluster/CNI mudar
+de faixa de pod CIDR no futuro (`kubectl get nodes -o
+jsonpath='{.items[0].spec.podCIDR}'`), esse valor precisa acompanhar.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
