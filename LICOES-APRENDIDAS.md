@@ -1451,6 +1451,49 @@ terminou o trabalho — sempre encadear uma chamada real do binário
 Ver o padrão já aplicado no Dockerfile (comentário acima do `RUN
 npm install -g ...`).
 
+## 37. Instalar o binário `claude` não é suficiente pro OpenClaw anunciar CLI nativa — falta `nodeHost.agentRuns.claude.enabled` (09/09/2026)
+
+Depois de corrigir o binário do Claude Code CLI (item 36) e reiniciar
+o gateway, o dashboard do OpenClaw continuava mostrando "Nenhuma CLI
+nativa está disponível" no seletor de host pro "Start in terminal".
+`claude --version` funcionava normalmente dentro do container — o
+binário em si nunca foi o problema desta vez.
+
+Vasculhando o bundle minificado do control-ui não achei a lógica real
+(só as strings de i18n — `nativeHostsUnavailable`, `chooseNativeHost`
+em `control-ui-core-*.js`); o achado veio da documentação oficial, na
+página [`/nodes/session-catalogs`](https://docs.openclaw.ai/nodes/session-catalogs)
+(não indexada em nenhum lugar óbvio — achei via `sitemap.xml`, não
+pela navegação nem pela busca do próprio site):
+
+> A headless node host can opt into the same continuation flow:
+> ```json5
+> { nodeHost: { agentRuns: { claude: { enabled: true } } } }
+> ```
+> The node advertises `agent.cli.claude.run.v1` only when this
+> **node-local setting is enabled** and the `claude` executable
+> resolves on that node. **The Gateway cannot enable it remotely.**
+
+**Why:** é um gate de consentimento deliberado — rodar uma CLI nativa
+com acesso a arquivo/ferramentas de verdade na máquina é bem mais
+sensível que só ter o binário instalado, então o OpenClaw exige opt-in
+explícito por node, desligado por padrão (`false`), documentado como
+"não pode ser habilitado remotamente pelo Gateway" mesmo quando
+Gateway e node são o mesmo processo (nosso caso: instância genérica
+dentro do próprio container do Cerbero).
+
+**How to apply:**
+
+```bash
+openclaw config set nodeHost.agentRuns.claude.enabled true --strict-json
+kubectl -n olympus rollout restart deployment/cerbero   # só é lido na subida
+```
+
+Confirmar via `openclaw config schema` (path
+`nodeHost.agentRuns.claude.enabled`, boolean) antes de assumir que o
+nome do campo está certo — a doc não cita o comando `config set`
+exato, só o JSON5 final esperado.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
