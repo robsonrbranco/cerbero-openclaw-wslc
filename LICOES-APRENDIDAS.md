@@ -1494,6 +1494,111 @@ Confirmar via `openclaw config schema` (path
 nome do campo está certo — a doc não cita o comando `config set`
 exato, só o JSON5 final esperado.
 
+## 38. Passo final pra CLI nativa aparecer: o Gateway precisa de um sidecar `node run` pareado consigo mesmo (09/09/2026)
+
+Continuação direta dos itens 36 e 37: binário instalado, `claude
+--version` funcionando, `nodeHost.agentRuns.claude.enabled: true`
+configurado — e o dashboard ainda mostrava "Nenhuma CLI nativa
+disponível". `openclaw node status` revelou a peça que faltava:
+
+```
+Service: systemd user (disabled)
+Runtime: unknown (systemctl not available; systemd user services are required on Linux.)
+```
+
+**"Gateway" e "node" são processos separados no OpenClaw, mesmo
+quando é a mesma máquina.** O mecanismo padrão de instalar o node
+host (`openclaw node install`) depende de `systemd`, que não existe
+num container Docker/k8s enxuto como este. Sem um processo `node run`
+de verdade conectado, não existe "host" nenhum pra anunciar
+`agent.cli.claude.run.v1` — a config do item 37 fica sem efeito
+prático.
+
+**Sequência completa que funcionou** (cada etapa teve um obstáculo
+próprio, documentados abaixo):
+
+1. **Habilitar o plugin `device-pair`** (estava desabilitado desde
+   sempre, mesmo aviso do `doctor --lint` desde o início do projeto):
+   ```bash
+   openclaw config set plugins.allow '[...lista atual..., "device-pair"]' --strict-json
+   openclaw plugins enable device-pair
+   # restart
+   ```
+
+2. **Gerar código de pareamento** — `openclaw devices join-code`
+   falhava sempre com `Join URLs require a TLS gateway endpoint,
+   except for loopback`, mesmo passando `--url ws://127.0.0.1:18789`
+   explicitamente no CLI. Causa raiz (achada lendo
+   `device-pair-setup-*.mjs` no bundle): o `--url` do CLI só controla
+   como o CLI *fala* com o gateway pra fazer a chamada — a URL que vai
+   *dentro* do código de pareamento vem de config do servidor
+   (`plugins.entries.device-pair.config.publicUrl`), que por padrão
+   resolve pro endereço LAN do gateway (`gateway.bind: lan`), não
+   loopback. Fix:
+   ```bash
+   openclaw config set plugins.entries.device-pair.config.publicUrl "ws://127.0.0.1:18789"
+   # restart, depois:
+   openclaw devices join-code --json
+   ```
+   Achado à parte, mas real: a CLI `openclaw devices join-code`
+   **hardcoda `joinUrl: true`** na chamada RPC (visto em
+   `devices-cli.runtime-*.mjs`) — não existe flag pra pedir só o
+   código bruto (que a própria mensagem de erro sugere existir:
+   "Use the setup code directly"). Sem o `publicUrl` de loopback
+   configurado, não tem como contornar isso pela CLI.
+
+3. **Resgatar o código** (`openclaw connect <joinUrl>`, ~10 min de
+   validade) — parou em `role upgrade pending approval`. A identidade
+   local da CLI (`cli`, já pareada como `operator`) estava pedindo
+   upgrade pra também ter role `node`, e isso precisa de aprovação
+   explícita:
+   ```bash
+   openclaw devices list          # pega o requestId em "Pending"
+   openclaw devices approve <requestId>
+   ```
+
+4. **Rodar o `node run` como sidecar persistente** — container novo
+   no `k8s/cerbero.yaml`, mesma imagem, montando só o volume `data`
+   (a identidade pareada já persiste lá, não precisa de `--pair` de
+   novo):
+   ```yaml
+   command: ["sh","-c","while true; do openclaw node run --host 127.0.0.1 --port 18789 --no-tls || true; sleep 10; done"]
+   ```
+   **Erro na primeira tentativa: `OOMKilled`** — copiei os limites de
+   recurso do sidecar `wacli-sync` (256Mi) sem lembrar que `openclaw
+   node run` carrega o mesmo runtime Node.js pesado do gateway
+   principal (o `wacli` é um binário Go leve, não é comparável).
+   Subiu pra 192Mi/768Mi (request/limit) e estabilizou (~300Mi em
+   uso real).
+
+5. **Aprovar a "superfície de capacidades" do node** — mesmo
+   conectado, os logs mostravam em loop `node capability surface is
+   awaiting operator approval` (aprovação DIFERENTE da do passo 3 —
+   essa é sobre quais comandos específicos o node pode anunciar, ex.
+   `agent.cli.claude.run.v1`, `anthropic.claude.terminal.start.v1`):
+   ```bash
+   openclaw nodes pending
+   openclaw nodes approve <requestId>
+   ```
+   Confirmação final: `openclaw nodes status` mostrando `paired ·
+   connected · approved`.
+
+**Why:** cada uma dessas aprovações é um gate de segurança deliberado
+(rodar uma CLI nativa com acesso real a arquivo/ferramentas é
+sensível) — mas a mensagem de erro do dashboard ("Instale-a no
+Gateway ou conecte uma máquina") não deixa nem remotamente óbvio que
+isso envolve 5 etapas com 3 obstáculos distintos de configuração/bug
+de CLI. A documentação oficial (`/nodes/session-catalogs`) tem a
+resposta completa, mas não é indexada em nenhum lugar óbvio da
+navegação do site.
+
+**How to apply:** se isso quebrar nalgum upgrade futuro, o
+diagnóstico correto é sempre nessa ordem: `claude --version` (binário
+ok?) → `openclaw config get nodeHost.agentRuns.claude.enabled` (opt-in
+ok?) → `openclaw nodes status` (node conectado E approved?) → `kubectl
+logs -c node-host` (erros de aprovação pendente?). Não assumir que
+restart sozinho resolve qualquer coisa nessa cadeia.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
