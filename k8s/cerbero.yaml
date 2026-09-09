@@ -188,6 +188,10 @@ spec:
         # de NODE, nao do processo do Gateway em si (ver LICOES-APRENDIDAS.md
         # item 37/38). Este sidecar so mantem essa conexao viva; nao guarda
         # estado proprio (a identidade pareada vive no volume compartilhado).
+        # Memoria generosa de proposito: "openclaw node run" carrega o mesmo
+        # runtime Node.js pesado do gateway principal (nao e um binario leve
+        # tipo o wacli acima) - 256Mi (copiado do wacli-sync por engano)
+        # OOMKilled na primeira tentativa em producao (09/09/2026).
         - name: node-host
           image: ghcr.io/robsonrbranco/cerbero-gateway:latest
           envFrom:
@@ -207,11 +211,11 @@ spec:
               mountPath: /home/cerbero/.openclaw
           resources:
             requests:
-              cpu: 25m
-              memory: 64Mi
+              cpu: 50m
+              memory: 192Mi
             limits:
-              cpu: 250m
-              memory: 256Mi
+              cpu: 500m
+              memory: 768Mi
       volumes:
         - name: data
           persistentVolumeClaim:
