@@ -1207,9 +1207,10 @@ entrega no WhatsApp continuou rodando e gerando conteúdo normalmente,
 mas nenhum conseguia entregar — status `ok (not delivered)` em
 `parapente-boletim`, `daily-briefing`, `evening-wrapup`,
 `remo-boletim` e `base-condominio-monitor`, silenciosamente, por 3
-dias, sem nenhum alerta em lugar nenhum. O segundo dispositivo
-(`wacli`, usado só leitura pro grupo de condições de voo) não foi
-afetado por esse evento.
+dias, sem nenhum alerta em lugar nenhum. Na hora do check-up, o
+segundo dispositivo (`wacli`) ainda parecia intacto — mas ver item 33:
+o re-pareamento deste item acabou derrubando o `wacli` por
+consequência.
 
 **Why:** o motivo exato do logout não ficou confirmado (não é algo
 rastreável pelo lado do servidor) — os candidatos mais prováveis são
@@ -1247,6 +1248,69 @@ de falha, considerar um cron de "auto-diagnóstico" que rode
 canal, já que o WhatsApp é justamente o que pode estar quebrado) se o
 health virar `terminal-disconnect` — hoje isso só é pego por check-up
 manual.
+
+## 33. Re-parear o WhatsApp principal derrubou o `wacli` (dispositivo companion do mesmo número) (09/09/2026)
+
+Minutos depois de re-parear o canal WhatsApp principal do item 32, um
+`openclaw channels status` normal e o `wacli-sync` (segundo
+dispositivo, usado só leitura pro grupo de condições de voo) também
+começou a cair, em loop, com o mesmo tipo de erro:
+
+```
+Logged out of WhatsApp (401: logged out from another device). Stopping sync.
+```
+
+`wacli auth status` confirmou o motivo: o `wacli` está autenticado
+como `5521995256856@s.whatsapp.net` — **o mesmo número** do canal
+principal do Cerbero, não uma conta separada. Ou seja, principal e
+`wacli` são dois "dispositivos vinculados" (linked devices) do MESMO
+WhatsApp, igual a ter o WhatsApp Web aberto em dois navegadores
+diferentes. Ao escanear o QR novo pro principal na tela "Dispositivos
+conectados" do celular, o WhatsApp derrubou o outro dispositivo
+vinculado antigo (`wacli`) — seja por ação direta na hora de gerenciar
+a lista de dispositivos, seja por um limite de dispositivos vinculados
+por conta.
+
+**Why:** o WhatsApp multi-device tem um teto de dispositivos vinculados
+simultâneos por número (na faixa de 4-5). Re-parear qualquer um dos
+dois bots deste projeto (`default` e `wacli`) que compartilham o mesmo
+número de telefone é uma operação que **pode** invalidar o outro,
+mesmo sem intenção — não é garantido, mas é um risco real e já
+aconteceu uma vez.
+
+**How to apply (recuperação do `wacli` especificamente):**
+`wacli auth logout` (o comando "oficial" de limpar sessão) **não
+funciona** quando a sessão já está morta: ele tenta primeiro avisar o
+servidor do logout antes de limpar o arquivo local, e essa notificação
+falha exatamente porque a conexão já está rejeitada — trava num
+círculo vicioso (`error sending logout request: websocket disconnected
+before info query returned response`), sem nunca chegar a limpar nada.
+Rodar `wacli auth` (ou `--phone`) por cima disso também não ajuda: ele
+tenta reaproveitar a sessão local (ainda presente, ainda inválida) e
+termina imprimindo `Authenticated. Messages stored: 0` de forma
+enganosa — parece ter funcionado, mas `wacli auth status` continua
+mostrando o mesmo dispositivo morto.
+
+O fix que funcionou: apagar manualmente só o arquivo de sessão/lock,
+preservando o histórico sincronizado (`wacli.db`, mensagens já
+indexadas — não é a mesma coisa que `session.db`, que é só a
+credencial da conexão):
+
+```bash
+kubectl -n olympus exec deploy/cerbero -c wacli-sync -- sh -c \
+  'rm -f "$WACLI_STORE_DIR/session.db" "$WACLI_STORE_DIR/LOCK"'
+```
+
+Depois disso, `wacli auth status` passa a mostrar corretamente `Not
+authenticated`, e só então `wacli auth` (com TTY de verdade, mesma
+lógica do item 32: `kubectl exec -it deploy/cerbero -c wacli-sync --
+wacli auth`) gera um QR novo de verdade em vez de tentar reaproveitar
+a sessão morta.
+
+**Lição em aberto:** da próxima vez que precisar re-parear o WhatsApp
+principal, avisar antes que o `wacli` pode cair de tabela — e
+verificar `wacli auth status` logo em seguida em vez de assumir que só
+o dispositivo que foi explicitamente re-pareado foi afetado.
 
 ## Referências usadas
 
