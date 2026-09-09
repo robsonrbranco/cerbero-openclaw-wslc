@@ -1312,6 +1312,54 @@ principal, avisar antes que o `wacli` pode cair de tabela — e
 verificar `wacli auth status` logo em seguida em vez de assumir que só
 o dispositivo que foi explicitamente re-pareado foi afetado.
 
+## 34. Plugins globais (`whatsapp`, `deepseek-provider`) ficam presos na versão do primeiro deploy, mesmo depois de atualizar o core (09/09/2026)
+
+Ao atualizar o core de `2026.9.1` para `2026.9.3` (patch, sem
+breaking change relevante pros plugins usados aqui — ver release
+notes), `openclaw plugins list` mostrou o plugin `WhatsApp` (o canal
+que o Cerbero inteiro depende) preso em `2026.7.1`, dois releases
+atrás do core, e o `@openclaw/deepseek-provider` na mesma situação.
+
+**Why:** o Dockerfile pré-instala o plugin do WhatsApp *dentro da
+imagem* de propósito (ver comentário no próprio Dockerfile — falha
+cedo no build em vez de depender do ClawHub em runtime). Mas esse
+plugin vive no volume persistente `cerbero-data`
+(`/home/cerbero/.openclaw/extensions/whatsapp`), que só é populado a
+partir da imagem **na primeira vez que o volume está vazio** — em
+todo deploy subsequente, o volume já tem conteúdo, então o passo do
+Dockerfile (`plugins install`) não sobrescreve nada. Resultado: trocar
+o `FROM` do Dockerfile atualiza o *core*, mas plugins instalados no
+volume persistente (não os "stock" que vêm embutidos em
+`/app/dist/extensions`) ficam congelados na versão de quando foram
+instalados pela última vez, por mais releases que passem.
+
+**How to apply:** depois de qualquer bump de versão do core, checar
+`openclaw plugins list` procurando por plugins com Source
+`global:...` ou `$OPENCLAW_HOME/...` (não `stock:...`) em versão
+diferente do core, e atualizar explicitamente:
+
+```bash
+openclaw plugins update --all --dry-run   # ver o que mudaria primeiro
+openclaw plugins update --all             # duckduckgo e whatsapp seguem o "latest" normalmente
+openclaw plugins update @openclaw/deepseek-provider@latest  # esse fica "pinado" e precisa do @latest explícito
+kubectl -n olympus rollout restart deployment/cerbero        # plugins só carregam depois de restart
+```
+
+Depois do restart com o WhatsApp plugin atualizado (`2026.7.1` →
+`2026.9.3`), a sessão do WhatsApp **reconectou sozinha sem precisar de
+QR novo** — a credencial de sessão não é afetada por upgrade de
+plugin, só por logout do lado do WhatsApp (ver item 32). Bom sinal de
+que dá pra manter os plugins em dia sem medo de derrubar a conexão.
+
+**Recorrência confirmada:** o mesmo aviso de índice de memória do
+upgrade anterior (`feedback_openclaw_version_skew` /
+`index chunking implementation changed` / `Vector search: paused
+until memory is rebuilt`) apareceu de novo neste upgrade menor —
+`openclaw memory status --index --agent main` resolve, mas parece ser
+uma rotina esperada em TODO upgrade de core (não só saltos grandes de
+versão), não um bug pontual. Adicionar isso ao checklist padrão
+pós-upgrade.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
