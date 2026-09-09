@@ -96,7 +96,21 @@ RUN mkdir -p /tmp/wacli-extract \
 # Versao pinada de proposito (mesma logica do gogcli/wacli acima - nunca
 # "latest"). Pra atualizar, checar `npm view @anthropic-ai/claude-code
 # version` e trocar o numero aqui deliberadamente.
-RUN npm install -g @anthropic-ai/claude-code@2.1.266
+#
+# O "npm install -g" sozinho nao e suficiente: o pacote baixa o binario
+# nativo de verdade num postinstall separado (dependencia opcional
+# platform-specific), e esse passo falhou silenciosamente aqui mesmo
+# rodando como root (motivo exato nao confirmado - suspeita de timing/
+# rede no ambiente do build) - o binario ficava um stub que so imprime
+# "claude native binary not installed" (descoberto em producao em
+# 09/09/2026). Por isso rodamos o install.cjs de novo explicitamente e
+# validamos com `claude --version` no proprio build - se isso voltar a
+# falhar, o build inteiro para (fail cedo, mesma logica do plugin
+# WhatsApp mais abaixo), em vez de descobrir isso so quando alguem tenta
+# usar a CLI pelo dashboard do OpenClaw.
+RUN npm install -g @anthropic-ai/claude-code@2.1.266 \
+    && node /usr/local/lib/node_modules/@anthropic-ai/claude-code/install.cjs \
+    && claude --version
 
 # -----------------------------------------------------------------------------
 # zoho-mail - CLI caseiro pra API do Zoho Mail (contato@ecomciencia.com),
