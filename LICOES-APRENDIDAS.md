@@ -1136,14 +1136,117 @@ passar por outro IP pro rate-limit/allowlist do gateway. O preço é que
 qualquer deploy atrás de reverse proxy (é o nosso caso: Traefik do
 k3s) precisa declarar explicitamente em quem confiar.
 
-**How to apply:** `openclaw config set gateway.trustedProxies
-'["10.42.0.0/24"]' --strict-json` (aceita IP solto ou CIDR — usamos o
-CIDR do pod network do k3s de propósito, não o IP do pod do Traefik
-sozinho, porque esse IP muda a cada restart do Traefik e travaria tudo
-de novo) + `kubectl rollout restart deployment/cerbero` (a mudança só
-é lida na subida do gateway, não em runtime). Se o cluster/CNI mudar
-de faixa de pod CIDR no futuro (`kubectl get nodes -o
-jsonpath='{.items[0].spec.podCIDR}'`), esse valor precisa acompanhar.
+**Tentativa 1 (incompleta):** configurei `trustedProxies` pro CIDR
+inteiro do pod network do k3s (`["10.42.0.0/24"]`), imaginando que
+"não fixar o IP exato do Traefik, que muda a cada restart" fosse mais
+robusto. Isso passou no teste rápido (curl direto → 302 do Cloudflare
+Access), mas o erro voltava assim que uma requisição autenticada
+chegava na origem de verdade. Causa: o `svclb` embutido do k3s (usado
+em cluster single-node sem load balancer de nuvem) faz SNAT do tráfego
+externo antes mesmo do Traefik ver a requisição, trocando o IP real do
+visitante por `10.42.0.1` (o gateway/bridge da rede de pods) — e esse
+IP também caía dentro do `/24` que eu marquei como confiável. O código
+do gateway anda a cadeia de `X-Forwarded-For` de trás pra frente
+pulando qualquer hop "confiável" à procura do primeiro não-confiável;
+como `10.42.0.1` também era "confiável" pelo `/24`, o gateway pulava
+esse hop, não sobrava mais nada na cadeia, e caía em
+`unattributable-proxy` de novo — mesmo erro, causa mais sutil.
+Descobri isso subindo um listener HTTP de debug temporário dentro do
+próprio pod do Cerbero (Service + Ingress adicionais, sem tocar nos
+recursos de produção) pra capturar os headers reais que chegavam:
+`x-forwarded-for: 10.42.0.1`, `remoteAddress: 10.42.0.184` (IP do pod
+do Traefik).
+
+**Fix definitivo:** restringir `trustedProxies` para o IP exato do pod
+do Traefik, não a faixa inteira: `openclaw config set
+gateway.trustedProxies '["10.42.0.184/32"]' --strict-json` + `kubectl
+rollout restart deployment/cerbero` (a mudança só é lida na subida do
+gateway, não em runtime). Com só o IP do Traefik confiável, o
+`10.42.0.1` deixa de ser "pulável" e passa a ser aceito como o IP
+final da cadeia — resolve a atribuição mesmo sem preservar o IP real
+do visitante (que o `svclb` já destruiu antes do Traefik).
+
+**Trade-off importante de saber:** o IP do pod do Traefik muda se
+ele reiniciar (é um Deployment normal, não tem IP fixo) — quando isso
+acontecer, o erro volta e `gateway.trustedProxies` precisa ser
+atualizado de novo pro novo IP (`kubectl -n kube-system get pods -l
+app.kubernetes.io/name=traefik -o wide`). Não existe hoje um jeito
+"narrow e permanente ao mesmo tempo" nessa topologia (single-node,
+sem load balancer real preservando IP de origem) — é a troca aceita
+pelo próprio design do OpenClaw ("narrow" é literalmente o texto da
+mensagem de erro).
+
+**How to apply:** ao investigar um erro de atribuição de proxy,
+não confiar que "a faixa CIDR inteira do pod network" é mais segura
+que "o IP exato" — pode ser MENOS segura/funcional se essa faixa
+também cobrir um IP de infraestrutura (gateway, SNAT) que aparece
+como hop na cadeia de forwarded headers. Pra depurar de verdade,
+inspecionar os headers reais que chegam no processo (não assumir),
+mesmo que isso exija subir um listener de debug temporário.
+
+## 32. Sessão do WhatsApp principal do Cerbero foi deslogada silenciosamente por 3 dias (09/09/2026)
+
+Durante um check-up de rotina, `openclaw channels status` mostrou o
+canal WhatsApp principal (`default`) em
+`error:status=401 Unauthorized Stream Errored (conflict), stopped,
+disconnected, health:terminal-disconnect`. Não foi crash nem bug do
+gateway — o log mostrava um evento limpo e explícito:
+
+```
+2026-09-06T13:45:57 — WhatsApp session logged out. Run: openclaw channels login
+```
+
+O `health-monitor` interno detectou corretamente que era um logout
+"terminal" (não um problema de rede transitório) e **parou de tentar
+reconectar sozinho de propósito** — a cada 5 minutos, por 3 dias
+seguidos, só logava `skipping restart, terminal-disconnect` sem
+nunca escalar isso pra nenhum lugar visível.
+
+**Impacto real, só percebido no check-up manual:** todo cron que
+entrega no WhatsApp continuou rodando e gerando conteúdo normalmente,
+mas nenhum conseguia entregar — status `ok (not delivered)` em
+`parapente-boletim`, `daily-briefing`, `evening-wrapup`,
+`remo-boletim` e `base-condominio-monitor`, silenciosamente, por 3
+dias, sem nenhum alerta em lugar nenhum. O segundo dispositivo
+(`wacli`, usado só leitura pro grupo de condições de voo) não foi
+afetado por esse evento.
+
+**Why:** o motivo exato do logout não ficou confirmado (não é algo
+rastreável pelo lado do servidor) — os candidatos mais prováveis são
+o WhatsApp do celular ter removido o dispositivo em "Dispositivos
+conectados", ou uma reinstalação/relogin do WhatsApp no celular
+principal (que invalida todos os dispositivos vinculados de uma vez).
+O ponto mais importante não é a causa do logout em si (isso acontece,
+é normal em integrações de dispositivo vinculado), é que **o sistema
+não tem hoje nenhum alerta pra esse tipo de falha silenciosa** — só
+apareceu porque alguém rodou `openclaw channels status` manualmente.
+
+**How to apply (recuperação):** requer re-parear via QR, o que exige
+o celular vinculado por perto — não dá pra automatizar sem humano no
+loop. O jeito mais confiável que funcionou: `kubectl exec -it` com PTY
+de verdade (`-it`, não só `-i`), porque a lib de QR do OpenClaw checa
+`process.stdout.isTTY` e só desenha o QR em ASCII quando existe um
+terminal de verdade do outro lado:
+
+```bash
+kubectl -n olympus exec -it deploy/cerbero -c cerbero -- \
+  openclaw channels login --channel whatsapp --account default
+```
+
+Sem `-it`, o comando fica preso em "Waiting for WhatsApp
+connection..." sem nunca mostrar o QR, mesmo com `--verbose`. O
+comando também limpa sozinho a sessão antiga expirada antes de gerar
+o QR novo (~8-10s de carregamento do plugin antes do QR aparecer) —
+isso é esperado, não é um erro novo. Depois de escanear, **não** dar
+Ctrl+C — esperar a confirmação de conexão aparecer no terminal antes
+de sair.
+
+**Lição em aberto:** como não existe alerta automático pra esse tipo
+de falha, considerar um cron de "auto-diagnóstico" que rode
+`openclaw channels status --json` periodicamente e avise (por outro
+canal, já que o WhatsApp é justamente o que pode estar quebrado) se o
+health virar `terminal-disconnect` — hoje isso só é pego por check-up
+manual.
 
 ## Referências usadas
 
