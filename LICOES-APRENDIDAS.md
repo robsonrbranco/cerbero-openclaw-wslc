@@ -1402,6 +1402,55 @@ Fallback #1:   openai/gpt-5.6-luna
 Fallback #2:   google/gemini-3.8-flash
 ```
 
+## 36. `npm install -g @anthropic-ai/claude-code` sozinho não instala o binário de verdade (09/09/2026)
+
+O OpenClaw passou a mostrar "Claude Code" como CLI nativa disponível
+no dashboard, mas com a mensagem "Nenhuma CLI nativa está disponível.
+Instale-a no Gateway ou conecte uma máquina...". Decisão explícita:
+instalar uma instância genérica direto na imagem do Cerbero (não
+parear uma máquina real como "node" via `openclaw connect`, que usaria
+conta/config pessoal — essa é a outra opção, ver mensagem original).
+
+Rodar `npm install -g @anthropic-ai/claude-code@2.1.266` no Dockerfile
+"funcionou" sem erro, mas deixou `claude --version` quebrado com
+`exec format error`. Investigando, o symlink `/usr/local/bin/claude`
+apontava pra `bin/claude.exe` — não um binário real, mas um **stub**
+de shell script que só imprime:
+
+```
+Error: claude native binary not installed.
+Either postinstall did not run (--ignore-scripts, some pnpm configs)
+or the platform-native optional dependency was not downloaded
+(--omit=optional).
+```
+
+O pacote baixa o binário nativo de verdade num **postinstall
+separado**, como dependência opcional platform-specific — não vem
+dentro do próprio pacote npm. Nem `ignore-scripts` nem `omit=optional`
+estavam configurados no `npm config` da imagem, então a causa exata
+continua sem confirmação (suspeita: timing ou acesso de rede
+específico do ambiente do build do GitHub Actions) — mas rodar o
+postinstall de novo manualmente, como root, resolveu na hora:
+
+```bash
+node /usr/local/lib/node_modules/@anthropic-ai/claude-code/install.cjs
+```
+
+**Why:** esse tipo de dependência "opcional baixada à parte" é
+exatamente o tipo de instalação que falha silenciosamente sem dar erro
+de build — o `npm install -g` retorna sucesso mesmo quando o binário
+real não chegou, porque o pacote prefere deixar um stub explicativo a
+quebrar o install inteiro.
+
+**How to apply:** ao instalar QUALQUER CLI que dependa de um binário
+nativo baixado via postinstall (padrão comum em ferramentas Node
+modernas, não só esta), nunca confiar que `npm install -g` sozinho
+terminou o trabalho — sempre encadear uma chamada real do binário
+(`claude --version`, não só checar exit code do install) no mesmo
+`RUN` do Dockerfile, pra falhar o build cedo se o binário não vier.
+Ver o padrão já aplicado no Dockerfile (comentário acima do `RUN
+npm install -g ...`).
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
