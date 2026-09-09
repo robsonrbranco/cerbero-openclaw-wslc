@@ -23,13 +23,13 @@
 # Este Dockerfile so usa instrucoes basicas (FROM/USER/RUN/ENV/WORKDIR/EXPOSE/
 # CMD), que o frontend padrao ja resolve sem precisar buscar nada.
 
-# Versao pinada de proposito (04/09/2026, atualizando de 2026.7.1 pra
-# 2026.9.1) -- "latest" foi exatamente como a imagem ficou 2 meses
-# desatualizada sem ninguem perceber da ultima vez (ver
+# Versao pinada de proposito (09/09/2026, atualizando de 2026.9.1 pra
+# 2026.9.3, dois patches) -- "latest" foi exatamente como a imagem ficou 2
+# meses desatualizada sem ninguem perceber da ultima vez (ver
 # LICOES-APRENDIDAS.md, feedback_openclaw_version_skew na memoria do
 # Claude Code). Pra atualizar de novo no futuro, trocar o numero aqui
 # deliberadamente, nao voltar pra "latest".
-FROM ghcr.io/openclaw/openclaw:2026.9.1
+FROM ghcr.io/openclaw/openclaw:2026.9.3
 
 USER root
 
