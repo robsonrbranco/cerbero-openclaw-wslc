@@ -1360,6 +1360,48 @@ uma rotina esperada em TODO upgrade de core (não só saltos grandes de
 versão), não um bug pontual. Adicionar isso ao checklist padrão
 pós-upgrade.
 
+## 35. Como confirmar a "última versão" de um modelo antes de configurar (09/09/2026)
+
+Ao trocar a cadeia de modelo default do Cerbero pra `deepseek/deepseek-v4-flash`
+(default) → `openai/gpt-5.6-luna` (fallback 1) → `google/gemini-3.8-flash`
+(fallback 2), a checagem de "é realmente a versão mais nova?" não é
+óbvia via `openclaw models list` puro (que só mostra os ~12 modelos já
+liberados no `modelPolicy.allow`, não o catálogo inteiro do provider).
+O jeito certo:
+
+```bash
+openclaw models refresh                              # garante catalogo atualizado (cache de ate 1009 modelos/44 providers)
+openclaw models list --all --provider deepseek --json # --all sem --provider ainda filtra pros providers configurados
+openclaw models list --all --provider google --json
+```
+
+Confirmado nessa consulta: `deepseek-v4-flash` é o único "flash" do
+provider (só existe `v4-flash` e `v4-pro`, sem `v5`), e
+`gemini-3.8-flash` é de fato o mais novo entre 8 variantes flash do
+Gemini disponíveis (`2.5`, `3-preview`, `3.1`, `3.5`, `3.6`, `3.7`,
+`3.8`). Achado à parte: existe `openai/gpt-6-astra` no catálogo
+(geração nova, não só um bump de versão do `gpt-5.6-*`) — não foi
+adicionado à cadeia porque o pedido especificava `gpt-5.6-luna`
+nomeado, mas fica registrado como candidato pra próxima revisão de
+modelos.
+
+**Why:** `models list` sem `--all` só mostra os modelos já
+configurados no allowlist — dá a falsa impressão de que são as únicas
+opções existentes. `--all --provider <id>` é o comando que realmente
+expõe o catálogo do provider pra comparar versões.
+
+**Estado configurado nesta data** (o default já mudou 3x nesta mesma
+semana — `gemini-3.8-flash` → esgotou crédito prepago do Google AI
+Studio → `gpt-5.6-luna` → agora `deepseek-v4-flash` por decisão
+explícita — ver histórico de sessão, não repetir aqui como se fosse
+definitivo):
+
+```
+Default:       deepseek/deepseek-v4-flash
+Fallback #1:   openai/gpt-5.6-luna
+Fallback #2:   google/gemini-3.8-flash
+```
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
