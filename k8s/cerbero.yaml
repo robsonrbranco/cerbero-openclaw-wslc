@@ -178,6 +178,40 @@ spec:
             limits:
               cpu: 250m
               memory: 256Mi
+        # Node-host local: o Gateway pareado consigo mesmo como "node" (mesma
+        # identidade do device "cli" existente, so com role node adicionada
+        # via `openclaw devices approve`, feito manualmente uma vez em
+        # 09/09/2026 - nao repetir esse pareamento, ele ja persiste no volume
+        # "data" abaixo). Sem isso, o OpenClaw nao anuncia CLI nativa (Claude
+        # Code) como disponivel no dashboard, mesmo com o binario instalado e
+        # nodeHost.agentRuns.claude.enabled=true - "native CLI" e um conceito
+        # de NODE, nao do processo do Gateway em si (ver LICOES-APRENDIDAS.md
+        # item 37/38). Este sidecar so mantem essa conexao viva; nao guarda
+        # estado proprio (a identidade pareada vive no volume compartilhado).
+        - name: node-host
+          image: ghcr.io/robsonrbranco/cerbero-gateway:latest
+          envFrom:
+            - configMapRef:
+                name: cerbero-config
+          command:
+            - sh
+            - -c
+            - |
+              set -u
+              while true; do
+                openclaw node run --host 127.0.0.1 --port 18789 --no-tls || true
+                sleep 10
+              done
+          volumeMounts:
+            - name: data
+              mountPath: /home/cerbero/.openclaw
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
       volumes:
         - name: data
           persistentVolumeClaim:
