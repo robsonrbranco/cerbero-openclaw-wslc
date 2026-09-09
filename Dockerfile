@@ -86,6 +86,19 @@ RUN mkdir -p /tmp/wacli-extract \
     && chmod 1777 /tmp
 
 # -----------------------------------------------------------------------------
+# Claude Code CLI - instalado direto na imagem pra aparecer como "CLI nativa"
+# disponivel no OpenClaw (o plugin Anthropic ja embutido detecta um binario
+# "claude" no PATH e o expoe como native session catalog - nao precisa
+# habilitar nenhum plugin extra pra isso). E uma instancia generica do
+# Gateway, sem conta/config pessoal vinculada (diferente de parear uma
+# maquina real como "node" via `openclaw connect`, que usaria a conta do
+# usuario) - decisao consciente de 09/09/2026, mais simples de manter.
+# Versao pinada de proposito (mesma logica do gogcli/wacli acima - nunca
+# "latest"). Pra atualizar, checar `npm view @anthropic-ai/claude-code
+# version` e trocar o numero aqui deliberadamente.
+RUN npm install -g @anthropic-ai/claude-code@2.1.266
+
+# -----------------------------------------------------------------------------
 # zoho-mail - CLI caseiro pra API do Zoho Mail (contato@ecomciencia.com),
 # fonte em scripts/zoho-mail.sh. Nao existe um CLI oficial tipo o gogcli
 # pro Zoho, entao escrevemos um wrapper fino em cima de curl+jq (ja
