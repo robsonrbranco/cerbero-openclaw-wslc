@@ -1667,6 +1667,14 @@ alguma versão GA".
 `openclaw config get tts` com este trecho antes de suspeitar de
 config — se bater, o problema é no provider, não em nós.
 
+**Follow-up (11/09/2026, mesmo dia):** no teste manual do
+`daily-briefing` feito horas depois (ver item de reagendamento pra
+09:00 BRT), o timbre voltou ao esperado (Fenrir grave/firme,
+conforme `audioProfile`), sem nenhuma mudança de config nesse
+intervalo. Reforça a hipótese: foi deriva temporária do modelo
+preview do Google, autolimitada — não uma regressão permanente nem
+algo que precisasse de troca de provider/modelo.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
