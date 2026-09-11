@@ -1675,6 +1675,65 @@ intervalo. Reforça a hipótese: foi deriva temporária do modelo
 preview do Google, autolimitada — não uma regressão permanente nem
 algo que precisasse de troca de provider/modelo.
 
+## 40. Como confirmar (e adicionar) áudio TTS num cron — o `[[tts:text]]` é só uma diretiva interna (11/09/2026)
+
+Ao reagendar o `daily-briefing` pra 09:00 BRT (item anterior), o Branco
+pediu que `evening-wrapup` e `parapente-boletim` também saíssem com
+resumo em voz, igual ao `daily-briefing`. Checando os três jobs via
+`openclaw cron get <id>` (payload completo, não só `cron show`):
+
+- **`daily-briefing`** e **`evening-wrapup`** já tinham a instrução
+  `"... gere áudio TTS, entregue no WhatsApp do Branco."` no final do
+  `payload.message` — nada a mudar.
+- **`parapente-boletim`** não tinha nenhuma menção a áudio — só texto.
+
+**Fix**: `openclaw cron edit <id> --message "<mensagem completa +
+'Estruture com seções de emoji, gere áudio TTS do resumo, e entregue
+no WhatsApp do Branco...'>"`. O `cron edit --message` **substitui o
+payload inteiro**, não faz append — é preciso reenviar a mensagem
+completa (peguei via `cron get` antes de editar).
+
+**Como validar de verdade (não só confiar no texto do prompt)**: rodar
+`openclaw cron run <id> --wait --wait-timeout 5m` e depois checar
+`kubectl logs -c cerbero | grep "Sending message"` no horário do run.
+Um job com TTS funcionando manda **uma única mensagem `(media)`** pro
+WhatsApp (áudio com o texto como legenda, não texto e áudio
+separados). Comparar contra um job que já funciona (ex.
+`daily-briefing`) é o jeito rápido de confirmar que o padrão bateu.
+
+**Achado colateral, não é bug**: o campo `summary` do
+`cron runs` (log de auditoria) mostra a saída **crua** do agente,
+incluindo a diretiva `[[tts:text]]...` que ele emite pra pedir a
+síntese de voz — isso É esperado, o directive é processado e vira o
+áudio real antes de sair pro WhatsApp; **não vaza** pro usuário final
+(confirmado comparando o log de envio, que sempre mostra só uma
+mensagem `(media)`, nunca o texto cru com `[[tts:text]]` dentro).
+
+**Achado colateral #2, aberto**: toda mensagem `(media)` enviada nos
+últimos dias (`daily-briefing`, `evening-wrapup`, `parapente-boletim`,
+em dias e conteúdos completamente diferentes) loga o **mesmo** hash
+`sha256:f73ca112e05f` na linha `Sending message -> sha256:... (media)`.
+Isso é estatisticamente impossível se fosse o hash do conteúdo real do
+áudio — deve ser um valor fixo/placeholder de log (hash do envelope da
+mensagem, não do arquivo), não um sinal de cache indevido, já que o
+conteúdo de cada briefing é visivelmente diferente e o usuário
+confirmou ouvir o áudio certo em testes anteriores. Não investigado a
+fundo; **se algum dia um áudio errado for entregue, olhar esse hash
+primeiro** deixa de ser confiável como pista — teria que investigar o
+payload de mídia de verdade, não o log.
+
+**Why:** documentar o `--message` substituindo o payload inteiro evita
+perder trechos de uma mensagem longa ao editar um cron às pressas; e
+documentar o padrão de validação (`cron run --wait` + grep de
+`Sending message`) evita reinventar o método de teste a cada cron
+novo que precisar de áudio.
+
+**How to apply:** pra adicionar TTS em qualquer cron novo, copiar a
+fórmula de fechamento usada no `daily-briefing`/`evening-wrapup`:
+"Estruture com seções de emoji, gere áudio TTS [do resumo], e
+entregue no WhatsApp do Branco." — e validar com `cron run --wait` +
+grep de log antes de considerar resolvido.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
