@@ -1599,6 +1599,74 @@ ok?) → `openclaw nodes status` (node conectado E approved?) → `kubectl
 logs -c node-host` (erros de aprovação pendente?). Não assumir que
 restart sozinho resolve qualquer coisa nessa cadeia.
 
+## 39. Mudança percebida na voz do TTS não tem origem na nossa config — todos os modelos de TTS do Google são `-preview` (11/09/2026)
+
+Usuário reportou timbre/sotaque diferente no áudio do Cerbero
+("mudou a voz"). Investigação completa não achou **nenhuma** mudança
+do nosso lado:
+
+- Todos os backups de `openclaw.json` disponíveis na volume (de
+  06/08 até o arquivo atual, incluindo os `.bak-premodels-*` e
+  `.bak.1`-`.bak.4` do upgrade de 09/09) têm o mesmo bloco `tts`,
+  byte a byte na parte relevante:
+  ```json
+  "tts": {
+    "provider": "google",
+    "providers": {
+      "google": {
+        "model": "gemini-3.1-flash-tts-preview",
+        "speakerVoice": "Fenrir",
+        "audioProfile": "Você é Cerbero, um guardião ancestral com voz masculina grave e firme..."
+      }
+    }
+  }
+  ```
+- `tts.persona` / `tts.personas`: não configurados (não existe
+  override de persona).
+- `user_preferences` (tabela do `state/openclaw.sqlite`, onde ficam
+  preferências locais tipo `/tts persona`): só tem uma linha
+  irrelevante de migração, nenhuma preferência de TTS por usuário.
+- `config_health_entries`: confirma que o `openclaw.json` só mudou
+  em 09/09 18:03 (a saga do sidecar `node-host`, item 38) — nada
+  depois disso.
+- `audit_events`: não guarda histórico de mudança de config (é só
+  eventos de mensagem/entrega), então não serve pra isso.
+
+**Causa provável**: `gemini-3.1-flash-tts-preview` é literalmente o
+único TTS "novo" que o Google oferece — consultei
+`GET /v1beta/models` direto na API (usando a `GEMINI_API_KEY` já no
+ambiente do container) e **todos** os modelos de TTS do catálogo são
+preview:
+```
+models/gemini-2.5-flash-preview-tts
+models/gemini-2.5-pro-preview-tts
+models/gemini-3.1-flash-tts-preview   <- o que usamos
+```
+Modelos `-preview` podem ter o comportamento/timbre atualizado pelo
+provedor sem aviso e sem mudar o nome do modelo ou da voz nomeada
+("Fenrir" continua se chamando "Fenrir", só passou a soar
+diferente). Não existe hoje uma opção GA (estável) de TTS no Gemini
+pra fixar contra esse tipo de deriva.
+
+**Decisão tomada**: manter `gemini-3.1-flash-tts-preview` + `Fenrir`
+como está e só agir se piorar mais. Alternativas identificadas mas
+não aplicadas, caso o problema volte a incomodar:
+- Rebaixar pra `gemini-2.5-flash-preview-tts` (geração anterior,
+  ainda preview, mas menos exposta a mudanças recentes).
+- Migrar pra um provider TTS com vozes GA (ElevenLabs ou Azure
+  Speech, ambos já habilitados no `plugins list` do Cerbero) — troca
+  de timbre garantida, mas elimina o risco de deriva silenciosa.
+
+**Why:** documentar isso evita reinvestigar do zero da próxima vez
+que alguém notar "a voz mudou" — a resposta rápida é "não foi nossa
+config, é o modelo preview do Google, checar
+`GET /v1beta/models?key=$GEMINI_API_KEY` grep tts pra ver se saiu
+alguma versão GA".
+
+**How to apply:** se o sintoma voltar, comparar
+`openclaw config get tts` com este trecho antes de suspeitar de
+config — se bater, o problema é no provider, não em nós.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
