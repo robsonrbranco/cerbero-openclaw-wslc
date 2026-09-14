@@ -1900,6 +1900,59 @@ funcionando espontaneamente, sem instrução explícita).
 trocar o provider de busca default (algo além de DuckDuckGo) em vez de
 só mitigar via instrução de prompt.
 
+## 44. "Claude CLI is not authenticated on this host" no dashboard — variável de ambiente não é compartilhada entre containers do mesmo pod (14/09/2026)
+
+Fechando o arco dos itens 36-38 (saga de habilitar a CLI nativa do
+Claude Code): depois de confirmar que `gateway.cliAgents.enabled` já
+vinha `true` por padrão desde a 2026.9.3 (não era o problema — ver
+pesquisa de changelog feita nesta mesma sessão) e que o node-host
+sidecar está `paired · connected · approved`, a dashboard
+(`/settings/model-setup`) finalmente passou a **listar** o Claude Code
+("Detectado", `claude-cli/claude-opus-5`) — mas com erro ao tentar
+"Testar & usar":
+
+```
+Claude CLI is not authenticated on this host. Run claude auth login
+first, then re-run this setup.
+```
+
+Confuso porque `claude auth status` rodado direto no container
+`cerbero` (o principal) mostrava `"loggedIn": true, "authMethod":
+"api_key", "apiKeySource": "ANTHROPIC_API_KEY"` — ou seja, o binário
+`claude` está de fato autenticado, só que **no container errado**.
+
+**Causa raiz**: o sidecar `node-host` — o container que de fato roda
+`openclaw node run` e conversa com o Gateway, anunciando a capacidade
+`claude-cli-skills-v1` — só tinha `envFrom: configMapRef: cerbero-config`
+no manifest, nunca `secretRef: cerbero-env` (que carrega
+`ANTHROPIC_API_KEY`). Variáveis de ambiente **não são compartilhadas
+entre containers do mesmo pod** mesmo eles compartilhando volumes —
+cada container tem seu próprio `env`. Rodar `claude auth status`
+dentro do `node-host` confirmava: `"loggedIn": false, "authMethod":
+"none"`.
+
+**Fix**: adicionar `secretRef: cerbero-env` ao `envFrom` do container
+`node-host` em `k8s/cerbero.yaml` (mesmo secret que o container
+`cerbero` já usa), `kubectl apply` (sem precisar rebuild de imagem —
+é só mudança de manifest) e restart. Confirmado: `claude auth status`
+no `node-host` passou a `"loggedIn": true"` e o node reconectou
+(`paired · connected · approved`) normalmente.
+
+**Why:** é fácil assumir que, como os dois containers compartilham o
+mesmo volume `data` (`/home/cerbero/.openclaw`) e a mesma identidade
+de device pareada, eles também compartilhariam credenciais — mas
+volume compartilhado e env compartilhado são coisas completamente
+independentes no Kubernetes. Cada sidecar precisa da sua própria lista
+explícita de `envFrom`.
+
+**How to apply:** ao adicionar qualquer sidecar novo que rode uma
+ferramenta que precise de credencial (CLI, SDK, etc.), sempre conferir
+se o `envFrom`/`secretRef` do container novo replica o que o container
+principal já tem — não assumir que "está no mesmo pod" é suficiente.
+Diagnóstico rápido pra esse sintoma específico: `kubectl exec -c
+<nome-do-sidecar> -- env | grep <VAR>` comparado com o mesmo comando no
+container principal.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,

@@ -192,11 +192,20 @@ spec:
         # runtime Node.js pesado do gateway principal (nao e um binario leve
         # tipo o wacli acima) - 256Mi (copiado do wacli-sync por engano)
         # OOMKilled na primeira tentativa em producao (09/09/2026).
+        # secretRef cerbero-env (ANTHROPIC_API_KEY) adicionado em 14/09/2026:
+        # sem isso o "claude" CLI que esse container executa fica sem
+        # credencial propria - dashboard mostrava "Claude CLI is not
+        # authenticated on this host" mesmo com o binario logado via API key
+        # no container "cerbero" principal (variavel de ambiente nao e
+        # compartilhada entre containers do mesmo pod). Ver item 44 do
+        # LICOES-APRENDIDAS.md.
         - name: node-host
           image: ghcr.io/robsonrbranco/cerbero-gateway:latest
           envFrom:
             - configMapRef:
                 name: cerbero-config
+            - secretRef:
+                name: cerbero-env
           command:
             - sh
             - -c
