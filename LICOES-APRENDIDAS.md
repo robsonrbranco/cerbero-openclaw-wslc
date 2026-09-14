@@ -1107,7 +1107,19 @@ apagar o subdiretório no fim do mesmo `RUN`. Se o padrão antigo
 precaução, mesmo sem sintoma até agora — o fato de não ter quebrado
 ainda não prova que o tarball dele é seguro, só que ainda não mudou.
 
-## 31. Upgrade pra OpenClaw 2026.9.1 passou a exigir `gateway.trustedProxies` (04/09/2026)
+## 31. Upgrade pra OpenClaw 2026.9.1 passou a exigir `gateway.trustedProxies` (04/09/2026, recorreu em 14/09/2026)
+
+**Recorrência confirmada (14/09/2026)**: exatamente como previsto no
+trade-off documentado abaixo — reboot completo do host (upgrade do
+servidor Hetzner pra `cx33`, ver `infra-olympus/LICOES-APRENDIDAS.md`
+item 12) recriou o pod do Traefik com IP novo (`10.42.0.178`, era
+`10.42.0.184`), voltando o erro `proxy_attribution_required` na UI.
+Fix idêntico: `openclaw config set gateway.trustedProxies
+'["<novo-ip>/32"]' --strict-json` + restart. Diagnóstico rápido:
+`kubectl -n kube-system get pod -l app.kubernetes.io/name=traefik -o
+wide` pra pegar o IP atual, comparar com `openclaw config get
+gateway.trustedProxies`. **Todo reboot de host (resize, manutenção,
+etc.) deve incluir essa checagem/fix no checklist pós-reboot.**
 
 Depois do upgrade de versão (item anterior de contexto:
 `feedback_openclaw_version_skew` na memória do Claude Code), o acesso
