@@ -1734,6 +1734,64 @@ fórmula de fechamento usada no `daily-briefing`/`evening-wrapup`:
 entregue no WhatsApp do Branco." — e validar com `cron run --wait` +
 grep de log antes de considerar resolvido.
 
+## 41. Upgrade pra OpenClaw 2026.9.4 (patch) — crash de "migration lease" no primeiro boot é esperado, não é bug (14/09/2026)
+
+Mesmo processo do item 31 (bump da tag no `Dockerfile`, commit, push,
+CI builda/deploya sozinho via `deploy.yml`). Antes de aplicar,
+conferido o changelog (`docs.openclaw.ai/releases/2026.9.4`) atrás de
+breaking changes — nenhum aplicável a este deploy (alias de env
+removido não é usado aqui; mudanças de Codex/Bun/SQLite não se
+aplicam). Confirmei a tag existente de verdade no GHCR antes de
+editar (`ghcr.io/v2/openclaw/openclaw/manifests/2026.9.4` → HTTP 200;
+o primeiro teste com header errado deu 404 falso-negativo — usar
+`Accept: application/vnd.oci.image.index.v1+json,...manifest.list.v2+json,...manifest.v2+json`
+pra manifestos multi-arch).
+
+**Achado**: logo após o rollout, o pod reiniciou uma vez sozinho
+(`Restart Count: 1`, ~14s de vida no container anterior). Log do
+container anterior (`kubectl logs --previous`):
+```
+[state/db] state database schema migration pending; verifying integrity first
+[openclaw] The CLI command failed.
+[openclaw] Reason: OpenClaw startup migration lease was lost before
+startup migrations completed; retry so migrations can run under a
+fresh lease.
+```
+Isso **não é erro nosso** — é o próprio OpenClaw falhando alto de
+propósito quando uma migração de schema do banco de estado (SQLite)
+não consegue segurar o lease a tempo, em vez de aplicar migração
+parcial silenciosamente. O restart automático do Kubernetes (política
+padrão do Deployment) já é a recuperação esperada: na segunda
+tentativa a migração completa e o pod fica `Running` estável. Bate com
+a nota do changelog de 2026.9.4 sobre "enhanced database maintenance
+for large installations" e "extensive update and repair improvements
+for stuck upgrades" — parece ser o comportamento novo e intencional,
+não uma regressão.
+
+**Checklist pós-upgrade de core, reaplicado sem susto** (mesmo do item
+34): `openclaw plugins list` mostrou `deepseek-provider`,
+`duckduckgo-plugin` e `whatsapp` presos em `2026.9.3` mesmo com o core
+em `2026.9.4` → `openclaw plugins update --all` → restart → confirmado
+`WhatsApp default: ... connected, health:healthy` sem re-pareamento, e
+`openclaw memory status --index --agent main` voltou limpo (`Dirty:
+no`, 93/93 arquivos, sem rebuild necessário desta vez — diferente do
+upgrade anterior, que exigiu rebuild por mudança no chunking).
+
+**Why:** um restart isolado logo após um upgrade de core assusta (fica
+parecendo `OOMKilled` ou crash real), mas o texto do log é
+autoexplicativo o suficiente pra diferenciar isso de um bug: se a
+mensagem for literalmente "migration lease was lost... retry", é
+esperado — não precisa investigar mais fundo, só confirmar que o pod
+estabilizou depois.
+
+**How to apply:** em qualquer upgrade futuro de core, depois do
+rollout: (1) `kubectl get pods` pra ver se `RESTARTS` é 0 ou 1 — se
+for 1 muito recente, rodar `kubectl logs --previous -c cerbero` antes
+de assumir problema; (2) rodar o checklist do item 34 de qualquer jeito
+(plugins desatualizados é praticamente garantido); (3) `channels
+status --channel whatsapp` e `memory status --index` como verificação
+final antes de considerar concluído.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
