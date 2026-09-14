@@ -1965,6 +1965,89 @@ Diagnóstico rápido pra esse sintoma específico: `kubectl exec -c
 <nome-do-sidecar> -- env | grep <VAR>` comparado com o mesmo comando no
 container principal.
 
+## 45. `NO_REPLY` intermitente no `daily-briefing`/`evening-wrapup` — investigação extensa, causa exata NÃO encontrada (14/09/2026, status: aberto)
+
+Continuação direta do item 42. Depois do fix da cadeia de fallback
+(gpt-6-astra → gpt-5.6-luna), os dois crons voltaram a mostrar
+`NO_REPLY` de forma intermitente — às vezes um run real acontece
+(tool calls de verdade, erro visível se algo falhar), às vezes é
+silêncio total (zero tool calls) de novo. Rodada extra de hipóteses
+testadas e **descartadas**, cada uma com um achado real no caminho:
+
+1. **Override de modelo do agente** — `agents.entries.main.model =
+   "openai/gpt-5.6-sol"` estava setado (provável clique acidental no
+   dashboard `/settings/model-setup`, "Testar & usar" parece SELECIONAR
+   o modelo, não só testar). Isso sobrepunha o default global
+   (`deepseek-v4-flash`) pra TODO o agente main, incluindo os crons.
+   Removido (`config unset agents.entries.main.model`) — real, mas não
+   era a causa: `NO_REPLY` continuou mesmo de volta ao DeepSeek.
+2. **Tipo de agendamento (`--cron` recorrente vs `--at` disparo
+   único)** — testado sistematicamente numa matriz 2x2 (mensagem
+   curta/longa × `--at`/`--cron`): só a combinação `--cron` + mensagem
+   longa falhava, as outras três sempre funcionavam. Levou à hipótese
+   de complexidade/tamanho da mensagem interagindo com o tipo de
+   agendamento.
+3. **Job recriado do zero** (`cron rm` + `cron add` idêntico, ID
+   novo) — **ainda falhou**. Descarta de vez a teoria de "registro
+   antigo corrompido" (que parecia forte depois do item 42).
+4. **Mensagem encurtada** — `AGENTS.md` já tem as Standing Orders
+   completas pra ambos os programas ("Program: Daily Briefing"/
+   "Program: Evening Wrap-up"), e esse arquivo já é injetado
+   automaticamente em toda sessão isolada (confirmado no log:
+   "workspace bootstrap file AGENTS.md... truncating in injected
+   context"). A mensagem do cron duplicava tudo isso desnecessariamente.
+   Encurtada pra só referenciar a seção do AGENTS.md — **ainda
+   falhou** (`NO_REPLY` de novo, dessa vez depois de 4min39s e caindo
+   de verdade no fallback `gpt-5.6-luna`, não só ficando no
+   DeepSeek).
+
+**Achado colateral #1 (real bug, documentado à parte)**: reboot do
+host (upgrade pro cx33) recriou o pod do Traefik com IP novo,
+reabrindo o `proxy_attribution_required` do item 31 — mesmo fix de
+sempre, mas confirma que TODO reboot de host precisa desse passo no
+checklist.
+
+**Achado colateral #2 (real bug)**: um `cron run --wait` interrompido
+por um restart do gateway no meio da execução deixa o job **travado em
+`status: running` permanentemente** — nem novos `cron run` manuais
+nem (aparentemente) a próxima execução agendada automaticamente
+teriam certeza de rodar nesse estado (não testado até o fim, mas
+achado preocupante o bastante pra agir preventivamente). **Fix
+aplicado**: ciclo `cron disable` + `cron enable` limpa o lock travado
+sem perder `nextRunAtMs`/schedule. **Se algum cron ficar "congelado"
+depois de um restart no meio de um run, tentar isso primeiro.**
+
+**Status real ao fechar esta investigação**: causa exata do
+`NO_REPLY` intermitente **não identificada**. Todas as correções
+acima são reais e válidas (cada uma resolveu um problema genuíno
+encontrado no caminho), mas nenhuma eliminou o sintoma raiz sozinha
+nem em conjunto. Padrão observado, sem explicação completa: falha
+parece mais provável em runs "reais" via `cron run` do job de
+produção do que em jobs de teste descartáveis criados na hora — mesmo
+quando configuração, modelo, tools, sessão e mensagem são
+byte-a-byte idênticos entre os dois. Suspeita não confirmada: algo
+ligado ao histórico/estado específico do `sessionKey` do job de
+produção que sobrevive mesmo à recriação do job (talvez algo
+indexado por `agentId + jobName`, não só pelo `jobId`) — não
+investigado a fundo por falta de tempo.
+
+**Decisão**: parar de forçar testes manuais (podem estar mascarando
+o próprio sintoma, ex. pressão indireta no DuckDuckGo) e monitorar as
+execuções reais agendadas (evening-wrapup 20:30, daily-briefing
+09:00 do dia seguinte) com dados de produção de verdade antes de
+decidir o próximo passo.
+
+**How to apply**: se isso recorrer, começar por aqui em vez de do
+zero: (1) confirmar `agents.entries.main.model` não tem override
+indesejado; (2) checar se o job está travado em `status: running` de
+uma interrupção anterior (`cron disable`/`enable` resolve); (3) se
+nada disso resolver, este item documenta que já se tentou recriar o
+job, encurtar a mensagem e trocar variáveis de ambiente sem sucesso —
+não repetir esse trabalho, investigar por outro ângulo (ex. abrir
+issue upstream com esta matriz de evidências, ou instrumentar com
+`openclaw proxy` pra capturar o tráfego exato de um run que falha ao
+vivo).
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
