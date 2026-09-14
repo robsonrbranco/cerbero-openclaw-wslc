@@ -1792,6 +1792,114 @@ de assumir problema; (2) rodar o checklist do item 34 de qualquer jeito
 status --channel whatsapp` e `memory status --index` como verificação
 final antes de considerar concluído.
 
+## 42. Cron isolado silenciosamente sem ferramentas (`NO_REPLY`) — fallback com runtime indisponível corrompe o turno inteiro, mesmo sem cair nele (14/09/2026)
+
+Pós-upgrade pra 2026.9.4, `daily-briefing` e `evening-wrapup` passaram a
+terminar em `NO_REPLY` (turno "sucedido" no `cron runs`, mas **zero**
+chamada de ferramenta, ~20-60s de duração, nada entregue). Sintoma
+enganoso: `completionStatus: "succeeded"` e `status: "ok"` — só o
+`deliverySuppressionReason: "silent"` denuncia que não saiu nada.
+
+**Método de isolamento** (relevante pra qualquer "cron parou de
+funcionar depois de um upgrade" futuro):
+1. Reproduzir a MESMA mensagem via `openclaw agent --model <id>
+   --session-key <novo>` (sessão nomeada, fora do scheduler) — **funcionou
+   perfeitamente**, tools chamadas, resposta completa. Descarta prompt,
+   modelo e tools em si.
+2. Criar um cron descartável (`cron add --at 10s --session isolated
+   --delete-after-run --tools "<mesma lista>" --message "<mesma
+   msg>"`) reproduzindo a MESMA sessão isolada + mesmas tools do job
+   real. **Também funcionou.** Isso isolou o problema pro JOB
+   ESPECÍFICO (`daily-briefing`/`evening-wrapup`), não pro mecanismo de
+   cron isolado em geral.
+3. `openclaw doctor` revelou a causa real, em duas partes que pareciam
+   não relacionadas até serem cruzadas:
+   - "7 tool-bearing cron jobs keep legacy sender-policy resolution...
+     Reauthorize com `cron edit <id> --tools <tool,...>`" — jobs
+     antigos (criados antes do campo `scheduledToolPolicy` existir)
+     não têm esse campo. **Aplicado, mas sozinho não resolveu.**
+   - "`agents.defaults.model.fallbacks.0: openai/gpt-6-astra` resolve
+     com runtime Codex enquanto o plugin Codex está desabilitado" —
+     achado à parte, mas a peça que faltava.
+
+**Causa raiz real**: um cron job SEM `model` explícito no payload
+(como todos os nossos — dependem do default do agente) passa pela
+resolução da **cadeia de fallback inteira** na preparação do harness de
+ferramentas, mesmo que o modelo default (`deepseek-v4-flash`) nunca
+precise recorrer a ela. Como `openai/gpt-6-astra` (fallback #1,
+configurado num upgrade de modelos dias antes) resolve pra um runtime
+Codex indisponível (plugin desabilitado), essa preparação falha e
+**derruba o harness de ferramentas do turno inteiro em silêncio** — o
+modelo primário roda normalmente (5-13 chamadas rápidas ao DeepSeek,
+todas HTTP 200), mas sem NENHUMA ferramenta anexada, então não há o
+que chamar e a resposta final nunca se materializa.
+
+Confirmado por eliminação: chamadas com `--model` explícito no CLI
+logam `[model-fallback] configured fallbacks disabled by user model
+override` — ou seja, um override explícito **pula** essa resolução de
+cadeia por completo, por isso todo teste manual (que sempre usou
+`--model`) funcionava perfeitamente enquanto o job real (sem
+`--model`) falhava.
+
+**Fix**: `openclaw models fallbacks clear` + re-adicionar
+`openai/gpt-5.6-luna` no lugar de `gpt-6-astra` (volta ao que
+funcionava antes) + restart do gateway. Depois do fix, o padrão de
+falha mudou de "silêncio total" pra pelo menos alguns runs mostrarem
+erro real de ferramenta (ver próximo item) — confirma que a cadeia de
+fallback era, de fato, o que corrompia o harness.
+
+**Achado colateral não resolvido nesta sessão**: mesmo com o fallback
+corrigido, alguns runs do `daily-briefing` voltaram ao padrão de
+silêncio total (zero tool calls) de forma não-determinística, alternando
+com runs que erram explicitamente em `web_search` (DuckDuckGo bot-
+detection — ver item 43). Não bate com carga do servidor (`load
+average` baixo, 0.44-0.83, no momento da falha). Causa exata da
+intermitência remanescente não identificada — decisão foi monitorar as
+execuções reais (20:30 e 09:00 do dia seguinte) em vez de continuar
+forçando testes manuais, que podem estar contribuindo pro próprio
+bloqueio do DuckDuckGo pelo volume.
+
+**Why:** um fallback quebrado NUNCA precisa ser efetivamente usado pra
+causar dano — só precisa existir na config pra a preparação eager do
+harness falhar. Isso é um comportamento novo/mais estrito do 2026.9.4
+(o `doctor` também não tinha esse check antes). Testar um modelo
+sozinho (`infer model run`, ou `agent --model X`) NÃO valida que ele é
+seguro como fallback num cron sem `--model` explícito — precisa testar
+a cadeia completa, sem override, exatamente como o job de produção
+roda.
+
+**How to apply:** depois de qualquer troca na cadeia de fallback
+(`models fallbacks add/clear`), rodar `openclaw doctor` e procurar por
+avisos de "runtime" + "plugin desabilitado" pros modelos da cadeia,
+não só do modelo default. Se um cron parar de responder silenciosamente
+(`NO_REPLY`, sucesso técnico, zero tool calls) depois de mexer em
+modelos/plugins, suspeitar da cadeia de fallback antes de qualquer
+outra coisa — é a causa menos óbvia e mais destrutiva.
+
+## 43. DuckDuckGo em bot-detection — `web_search` falha, `web_fetch` direto nas fontes continua funcionando (14/09/2026)
+
+Durante a investigação do item 42, `web_search` (via plugin
+`duckduckgo`, também atualizado pra 2026.9.4 hoje) passou a retornar
+consistentemente `DuckDuckGo returned a bot-detection challenge` em
+testes isolados (`agent --model ... --message "Use SOMENTE
+web_search..."`). `web_fetch` direto nas fontes (ex. `wttr.in` pra
+clima) continua funcionando normalmente.
+
+Não confirmado se é: (a) IP do servidor Hetzner sinalizado por
+DuckDuckGo pelo volume alto de chamadas dos testes desta sessão, (b)
+mudança de comportamento do plugin `duckduckgo` 2026.9.4, ou (c)
+enrijecimento do próprio DuckDuckGo. Mitigação aplicada: adicionada
+instrução explícita no prompt do `daily-briefing`/`evening-wrapup`
+("se web_search falhar, use web_fetch direto nas fontes") — reduz mas
+não elimina o problema, já que em sessões isoladas de cron o modelo
+nem sempre se autocorrige pra `web_fetch` da mesma forma que faz em
+sessões nomeadas ad-hoc (onde esse comportamento foi observado
+funcionando espontaneamente, sem instrução explícita).
+
+**Lição em aberto**: se o bloqueio persistir por dias, considerar
+trocar o provider de busca default (algo além de DuckDuckGo) em vez de
+só mitigar via instrução de prompt.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
