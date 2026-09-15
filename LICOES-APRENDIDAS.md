@@ -2048,6 +2048,56 @@ issue upstream com esta matriz de evidências, ou instrumentar com
 `openclaw proxy` pra capturar o tráfego exato de um run que falha ao
 vivo).
 
+## 46. `web_search` nunca foi configurado explicitamente — "auto-detect" escolheu DuckDuckGo sozinho; trocado pra Gemini (15/09/2026)
+
+Seguindo os itens 43/45 (bloqueio do DuckDuckGo), o Branco notou que
+nunca lembra de ter instalado/configurado o DuckDuckGo como provider
+de busca. Confirmado: **nunca foi uma escolha explícita**. O campo
+que controla isso é `tools.web.search.provider` (schema:
+`docs.openclaw.ai/gateway/config-tools/built-in-tools`) — estava
+**unset**, e a descrição do próprio campo já avisa: *"optional; omit
+for auto-detect"*.
+
+`openclaw infer web providers` mostra o estado real de decisão do
+auto-detect:
+```
+duckduckgo: available=true, configured=true, selected=true, envVars=[]
+gemini:     available=true, configured=true, selected=false, envVars=[GEMINI_API_KEY]
+grok:       available=true, configured=false, selected=false
+minimax:    available=true, configured=false, selected=false
+ollama:     available=true, configured=true, selected=false
+```
+DuckDuckGo venceu o auto-detect mesmo com **Gemini igualmente
+"configured" (já tínhamos `GEMINI_API_KEY` pro TTS)** — não é
+"escolhe o único que não precisa de credencial", é alguma ordem de
+prioridade interna não documentada que favorece DuckDuckGo quando
+mais de um provider está disponível. Achado à parte: `ollama`
+aparece como "configured" mesmo sem nenhum Ollama rodando neste
+servidor — resultado meio enganoso do probe de "disponibilidade",
+não confiar cegamente nesse campo sem testar de verdade.
+
+**Fix**: `openclaw config set tools.web.search.provider gemini`
+(aplicou sem restart). Validado com busca real (`openclaw infer web
+search --query "..."`) — resultado correto, com citações, sem erro de
+bot-detection. **Cuidado com o nome do provider**: é `gemini`, não
+`google` (tentei `google` primeiro — erro `unknown web_search
+provider: google` — o id do provider de busca é diferente do id do
+plugin/provider de modelo `google`).
+
+**Why:** "auto-detect" para uma ferramenta usada em produção todo dia
+(briefings, boletins) é um risco silencioso — o provider pode ser
+trocado por uma atualização de plugin (como aconteceu, ver item 43) e
+ninguém percebe até o provider escolhido começar a falhar. Vale
+configurar explicitamente qualquer coisa que rode sem supervisão
+direta, mesmo que o default "funcione" no dia da instalação.
+
+**How to apply:** ao configurar qualquer ferramenta nova baseada em
+"provider" (`tools.web.search.provider`, mas o mesmo vale pra outras
+capabilities com múltiplos providers instalados), sempre checar
+`openclaw infer <capability> providers` e **setar explicitamente**
+em vez de confiar no auto-detect — evita ficar refém de qual plugin
+"ganha" a resolução automática depois do próximo upgrade.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
