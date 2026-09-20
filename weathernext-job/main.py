@@ -19,7 +19,8 @@ from datetime import datetime, timedelta, timezone
 import gcsfs
 import numpy as np
 import xarray as xr
-from google.cloud import storage
+from google.cloud import secretmanager, storage
+from google.oauth2.credentials import Credentials
 from metpy.calc import potential_temperature, wind_direction, wind_speed
 from metpy.units import units
 
@@ -55,6 +56,38 @@ SITES = {
         "janela_analise": "11-14h",
     },
 }
+
+
+def weathernext_credentials():
+    """Credencial de LEITURA do bucket do WeatherNext.
+
+    O acesso ao bucket esta atrelado a conta pessoal do operador, nao a
+    uma service account (ver LICOES-APRENDIDAS.md item 50). Entao lemos
+    um refresh token OAuth do Secret Manager -- gerado uma vez por
+    `autorizar.py`, com escopo unico de devstorage.read_only.
+
+    Se o segredo nao existir, cai no ADC do proprio job: e o que vai
+    valer no dia em que o Google liberar acesso pra service account,
+    e ai esse segredo pode ser apagado.
+    """
+    name = os.environ.get("OAUTH_SECRET", "weathernext-oauth-refresh-token")
+    try:
+        sm = secretmanager.SecretManagerServiceClient()
+        path = f"projects/{PROJECT}/secrets/{name}/versions/latest"
+        blob = sm.access_secret_version(request={"name": path}).payload.data.decode()
+        info = json.loads(blob)
+        log.info("usando credencial OAuth do operador (escopo storage read-only)")
+        return Credentials(
+            token=None,
+            refresh_token=info["refresh_token"],
+            client_id=info["client_id"],
+            client_secret=info["client_secret"],
+            token_uri="https://oauth2.googleapis.com/token",
+            scopes=["https://www.googleapis.com/auth/devstorage.read_only"],
+        )
+    except Exception as exc:  # segredo ausente ou ilegivel -> tenta ADC
+        log.warning("sem credencial OAuth (%s); caindo no ADC do job", type(exc).__name__)
+        return None
 
 
 def find_latest_synoptic_init(fs):
@@ -150,7 +183,10 @@ def profile_for_point(sub, lat, lon, levels):
 
 
 def main():
-    fs = gcsfs.GCSFileSystem(project=PROJECT, requester_pays=True)
+    creds = weathernext_credentials()
+    # requester_pays: o bucket cobra o projeto que consulta. Colocado em
+    # us-east1 o egress e zero, mas o header de billing ainda e exigido.
+    fs = gcsfs.GCSFileSystem(project=PROJECT, requester_pays=True, token=creds)
     zarr_path, init_dt = find_latest_synoptic_init(fs)
     log.info("init sinotico: %s", zarr_path)
 

@@ -5,6 +5,9 @@ on:
     branches: [main, master]
     paths-ignore:
       - "**.md"
+      # Roda no Cloud Run (us-east1), fora da imagem do Cerbero -- mexer
+      # nesse diretorio nao deve rebuildar nem reiniciar o gateway.
+      - "weathernext-job/**"
   workflow_dispatch: {}
 
 permissions:
