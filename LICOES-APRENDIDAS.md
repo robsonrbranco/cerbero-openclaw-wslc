@@ -2133,6 +2133,30 @@ prompt antes):
   (Existe também rampa Sul, 440m, S/SE/SW — não usada pelo boletim
   hoje, só a Norte que já era referenciada.)
 
+**Correção de domínio (mesmo dia, feedback do Branco): cada rampa
+tem um TIPO DE VOO diferente, e isso muda o que o boletim deve
+analisar** — não é só trocar a coordenada, o critério meteorológico
+inteiro muda:
+- **Parque da Cidade = voo de LIFT** (sustentação no relevo, não
+  térmico). Não faz sentido fixar a análise no meio-dia — o critério
+  é vento com intensidade suficiente pra sustentação nos topos, em
+  **qualquer janela entre 08h-17h**. Atividade térmica (11h-14h) é
+  só um bônus raro, não o foco.
+- **Sampaio Correia = potencial de voo XC** (cross-country),
+  dependente de térmica — aí sim o foco certo é a janela de maior
+  instabilidade atmosférica, **11h-14h** (pico ~12h).
+  Mensagem original do boletim (antes da separação) fixava as DUAS
+  rampas em "foco na previsão para 12h" — estava certo só pra
+  Saquarema, errado pra Niterói. Corrigido nas mensagens dos 2 crons
+  pra refletir o critério certo de cada tipo de voo.
+
+**Why:** meteorologia de voo livre não é genérica por local — o tipo
+de voo que cada rampa oferece (lift vs. térmico/XC) determina qual
+janela de horário e qual variável (intensidade de vento vs.
+instabilidade atmosférica) realmente importa. Herdar o mesmo
+critério de uma rampa pra outra por copy-paste gera recomendação
+tecnicamente errada mesmo com dados meteorológicos corretos.
+
 ## 48. Integração WeatherNext (BigQuery) — setup completo, bloqueado por cota diária na primeira validação (20/09/2026, status: aberto)
 
 Branco recebeu aprovação de acesso ao WeatherNext 3 (dataset
