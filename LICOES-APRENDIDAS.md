@@ -2227,6 +2227,99 @@ negado) — é só esperar reset (provável diário) ou pedir aumento via
 WeatherNext nas mensagens dos 2 crons de parapente com as
 coordenadas exatas do item 47.
 
+## 49. WeatherNext 3: o "5 km" do marketing vale pra 2 variáveis, e o Zarr tem chunk global (custo por ponto é brutal) (20/09/2026)
+
+Protótipo offline pra avaliar o WeatherNext 3 como base de um índice de
+térmica pra parapente. Três achados que mudam qualquer decisão de
+arquitetura — nenhum deles óbvio pela documentação de divulgação.
+
+### 1. Resolução: são TRÊS grades, não uma
+
+Confirmado por três fontes independentes (atributo `grid_degrees` de
+cada variável no próprio Zarr, docs oficiais em
+`developers.google.com/weathernext/guides/models`, e o catálogo do
+Earth Engine, que tem coleções separadas por grade):
+
+| Grade | ~km a -23° lat | Conteúdo | Nº vars |
+| --- | --- | --- | --- |
+| 0.05° | 5,1 × 5,6 | **só** temperatura e ponto de orvalho a 2m ("station head") | 2 |
+| 0.1° | 10,2 × 11,1 | vento 10m/100m, pressão, nuvens, radiação, precipitação, SST | 17 |
+| 0.25° | 25,6 × 27,8 | **todos** os 13 níveis de pressão (U/V, T, umidade, geopotencial, ω) | 12 |
+
+O headline "previsão a 5 km" (imprensa e material do DeepMind) se
+aplica **literalmente a duas variáveis**. Os 5 km são diferencial do
+WeatherNext **3** — o WeatherNext 2 é uniformemente 0.25° em tudo, e é
+esse o "15–25 km das versões anteriores" que as matérias citam.
+
+**Pra voo livre isso é favorável, não prejudicial**: temperatura e
+orvalho a 2m (que definem gatilho térmico e base de nuvem/LCL) estão
+na grade mais fina; vento 10m/100m em 10 km; e os 25 km ficam só pros
+perfis verticais, que descrevem regime sinótico/cisalhamento/inversão
+— fenômenos de larga escala por natureza.
+
+### 2. Os níveis de pressão só existem no Zarr (GCS)
+
+Nem BigQuery nem Earth Engine expõem os 13 níveis — ambos só têm
+superfície. Doc do Earth Engine é explícita: *"For the raw 64-member
+ensemble and 3D atmospheric pressure levels, use Google Cloud Storage
+(Zarr)"*. Os níveis vêm **apenas nos inits sinóticos** (00/06/12/18
+UTC, horizonte 360h); os inits horários intermediários têm só
+superfície, horizonte 48h — foi por isso que o primeiro init que abri
+(`..._10hr_...`) não tinha `level` nenhum.
+
+Estrutura do caminho (não documentada em lugar óbvio): cada init é
+`gs://weathernext3_spatial/weathernext_3_0_0/zarr/2026_to_present/
+YYYYMMDD_HHhr_01_preds/` e **o grupo Zarr de verdade está um nível
+mais fundo, em `predictions.zarr/`** — abrir o diretório de cima dá
+`GroupNotFoundError`. Também: abrir com `consolidated=False` (não tem
+`.zmetadata`).
+
+### 3. O chunking é GLOBAL — ler 1 ponto custa como ler o planeta
+
+Este é o achado mais caro. Cada chunk cobre a Terra inteira para uma
+única combinação (1 membro, 1 lead_time, 1 nível):
+
+| Variável | 1 chunk | 1 ponto, 64 membros, 1 lead time |
+| --- | --- | --- |
+| `u_component_of_wind` (0.25°) | 4,2 MB × 13 níveis | **~3,5 GB** |
+| `temperature_2m` (0.1°) | 155,6 MB | **~10 GB** |
+| `station_head_temperature_2m` (0.05°) | 622,3 MB | **~40 GB** |
+
+Não existe recorte espacial barato: `sel(lat, lon, method="nearest")`
+baixa o chunk global mesmo assim. **O custo escala com membros ×
+níveis × lead_times, nunca com a área pedida.** Dois scripts meus
+travaram baixando ~14 GB cada antes de eu entender isso (bucket é
+Requester Pays — egress pago). Pra validar a matemática, o caminho é
+`isel(sample=slice(0,2), lead_time=N, level=[...])` **antes** de
+qualquer `.compute()`: 2 membros × 6 níveis = ~50 MB, roda em ~1 min.
+
+Isso revela a intenção de design, confirmada pelo PDF de spec no
+próprio bucket: *"Colocated compute access is free; otherwise, all
+egress costs apply to the requester"*. O bucket é feito pra
+processamento em escala **dentro do us-east1**, não pra consulta
+pontual de fora.
+
+### 4. Viés marítimo da célula em sítio costeiro
+
+A célula 0.25° mais próxima do Parque da Cidade (Niterói) fica em
+-23,00/-43,00, a 12,1 km do ponto real e **majoritariamente sobre
+água**. Uma célula marítima subestima sistematicamente o potencial
+térmico de um sítio costeiro (o mar não aquece como o continente).
+Saquarema cai a 16,5 km, mas em célula continental.
+
+**Consequência de desenho**: perfil vertical (0.25°) serve pro regime
+sinótico; o gatilho térmico de superfície tem que vir das grades
+0.05°/0.1°, que resolvem terra/mar direito.
+
+### Validação da física (init 06Z de 20/09/2026, válido 15:00 BRT)
+
+O dado reproduz sozinho a distinção entre os dois sítios, sem nada
+codificado a respeito: Saquarema com Δθ 1000→925 hPa de **+0,53 °C**
+(camada baixa bem misturada, perfil de sítio térmico/XC) contra
+**+1,65 °C** em Niterói (mais estratificado, vento de E em superfície
+— assinatura de brisa marítima, compatível com voo de lift). Bom
+sinal de que o caminho é viável.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,
