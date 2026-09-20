@@ -2098,6 +2098,111 @@ capabilities com múltiplos providers instalados), sempre checar
 em vez de confiar no auto-detect — evita ficar refém de qual plugin
 "ganha" a resolução automática depois do próximo upgrade.
 
+## 47. Boletins de parapente/remo separados por localização + coordenadas oficiais CBVL (20/09/2026)
+
+Os 2 crons consolidados (`parapente-boletim` cobrindo 2 rampas,
+`remo-boletim` cobrindo 2 praias) foram substituídos por 4 crons
+independentes, um por local, seguindo convenção de nome
+`<atividade>-br-<uf>-<cidade>-<local>`:
+
+- `parapente-br-rj-niteroi-parque-cidade` (07:00 BRT)
+- `parapente-br-rj-saquarema-sampaio-correa` (07:00 BRT)
+- `remo-br-rj-niteroi-itaipu` (20:00 BRT)
+- `remo-br-rj-niteroi-charitas` (20:00 BRT)
+
+**`get_marine.py` ganhou um flag `--beach <itaipu|charitas>`** (antes
+sempre rodava as duas praias numa chamada só) — cada cron de remo
+consulta só a sua praia, sem desperdiçar a metade da resposta.
+
+**Armadilha na migração**: os 2 crons antigos ainda estavam ativos
+quando os 4 novos foram criados — ambos os pares rodaram juntos na
+janela seguinte (parapente às 07:00, remo às 20:00), duplicando
+mensagem no WhatsApp por um dia. **Lição**: ao substituir um cron por
+outro(s), remover o antigo ANTES do próximo horário de disparo, não
+depois.
+
+**Coordenadas exatas das rampas de parapente**, via CBVL
+(`cbvl.esp.br/aprenda-a-voar/rampas-do-brasil/`, fonte oficial —
+substitui as coordenadas aproximadas que estavam só descritivas no
+prompt antes):
+- **Parque da Cidade, Niterói**: -22.9298772, -43.0901203 (270m).
+  Ventos favoráveis: N, SE, S, NW — atenção: o vento pode virar de
+  NW pra SW de repente, turbulência no pouso.
+- **Sampaio Correia (rampa Norte), Saquarema**: -22.8589728,
+  -42.6403429 (720m). Ventos favoráveis na rampa Norte: N, NW, W.
+  (Existe também rampa Sul, 440m, S/SE/SW — não usada pelo boletim
+  hoje, só a Norte que já era referenciada.)
+
+## 48. Integração WeatherNext (BigQuery) — setup completo, bloqueado por cota diária na primeira validação (20/09/2026, status: aberto)
+
+Branco recebeu aprovação de acesso ao WeatherNext 3 (dataset
+experimental de previsão do tempo do Google DeepMind) e pediu ajuda
+pra integrar nos boletins de parapente/remo. Pesquisa técnica (ver
+histórico de sessão) confirmou: dados vivem em datasets do BigQuery
+compartilhados via **Analytics Hub** — não são um path público fixo,
+precisam ser "assinados" (subscribe) num projeto GCP próprio, gerando
+um dataset vinculado lá.
+
+**Setup completo, nesta ordem**:
+1. Projeto `cerbero-502221` (o mesmo já usado pro OAuth do `gog`) já
+   tinha billing habilitado e BigQuery API já ativa.
+2. Branco assinou o dataset via console
+   (`console.cloud.google.com/bigquery/analytics-hub` → "Pesquisar
+   listagens" → "WeatherNext 3" → Subscribe) — **não dá pra
+   automatizar isso via API/CLI sem passar pela sessão logada do
+   usuário**: tentei ler o data exchange direto
+   (`projects/871883017250/locations/us/dataExchanges/weathernext_19397e1bcb7`,
+   achado via busca) e recebi `403 analyticshub.listings.list denied`
+   — a descoberta/assinatura de listings públicos é enforced só pelo
+   fluxo de console, por design.
+3. Dataset vinculado: `cerbero-502221.weathernext_3`, tabelas
+   `weathernext_3_0_0_0p1deg` (grade 0.1°) e `_0p05deg` (0.05°,
+   mais fino).
+4. Service account dedicada `weathernext-reader@cerbero-502221.iam.gserviceaccount.com`
+   com `roles/bigquery.jobUser` no projeto (rodar query) +
+   `READER` só no dataset `weathernext_3` (não no projeto inteiro —
+   setado via PATCH direto na API do BigQuery, `bq`/`gcloud alpha`
+   CLI não estavam disponíveis localmente).
+5. Chave JSON da service account: **geração bloqueada pelo
+   classificador de modo automático** (materialização de credencial)
+   — corretamente. Pedi pro Branco rodar
+   `gcloud iam service-accounts keys create` no terminal dele. Assim
+   que o arquivo apareceu na raiz do `infra-olympus`, virou Secret do
+   Kubernetes (`weathernext-credentials`, montado em
+   `/home/cerbero/.gcp/key.json` no container `cerbero`) e o arquivo
+   local foi apagado na mesma respiração — nunca chegou a ser
+   commitado. `.gitignore` ganhou `*-key.json`/`*-credentials.json`/
+   `service-account*.json` como rede de segurança.
+
+**Script de consulta**: `get_weathernext.mjs` no workspace, **Node
+puro, sem dependências novas** (nem pip/python — o container não tem
+`pip` nem bibliotecas Google instaladas, e não tem `gcloud`/`bq`
+CLI). Usa `node:crypto` (`createSign('RSA-SHA256')`, built-in desde
+sempre) pra assinar o JWT da service account manualmente e trocar por
+access token via `oauth2.googleapis.com/token` — depois chama a API
+REST do BigQuery direto. Mesmo padrão stdlib-only de `get_marine.py`/
+`get_weather.py`.
+
+**Achado técnico**: a API `jobs.query` do BigQuery volta com
+`jobComplete: false` pra queries reais contra o WeatherNext (não
+completa dentro do wait síncrono, mesmo com `timeoutMs` alto) — é
+preciso fazer polling em `jobs.getQueryResults` com o `jobId` até
+completar. Script já trata isso (poll a cada 2s, timeout local de
+60s).
+
+**Bloqueio atual**: `403 Custom quota exceeded: QueryUsagePerDay` —
+cota diária de consultas nesse dataset compartilhado (comum em
+datasets experimentais/preview via Analytics Hub, provavelmente
+limitado de propósito durante o beta). Confirmado que **não é
+problema de permissão** (chegamos até o erro de cota, não de acesso
+negado) — é só esperar reset (provável diário) ou pedir aumento via
+`docs.cloud.google.com/bigquery/redirects/increase-query-cost-quota`.
+
+**Pendente pra fechar**: validar uma consulta real com sucesso
+(depois do reset de cota) e então trocar `get_weather.py`/inserir
+WeatherNext nas mensagens dos 2 crons de parapente com as
+coordenadas exatas do item 47.
+
 ## Referências usadas
 
 - `docs.openclaw.ai/cli/models` — comportamento de `models list --all`,

@@ -138,6 +138,9 @@ spec:
             - name: argos-env
               mountPath: /home/cerbero/data/argos/env
               readOnly: true
+            - name: weathernext-credentials
+              mountPath: /home/cerbero/.gcp
+              readOnly: true
           resources:
             requests:
               cpu: 100m
@@ -244,6 +247,9 @@ spec:
         - name: argos-env
           secret:
             secretName: argos-env
+        - name: weathernext-credentials
+          secret:
+            secretName: weathernext-credentials
 
 ---
 apiVersion: v1
