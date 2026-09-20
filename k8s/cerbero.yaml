@@ -123,6 +123,17 @@ spec:
                 name: cerbero-config
             - secretRef:
                 name: cerbero-env
+          env:
+            # Reaproveita o PAT ja usado pro clone dos repos privados no
+            # initContainer sync-projects (secret cerbero-git-token) como
+            # GH_TOKEN, pra habilitar o recurso de GitHub da Control UI
+            # (hover cards + descoberta de projeto -- so acessa dados
+            # publicos mesmo com um token de escopo mais amplo).
+            - name: GH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cerbero-git-token
+                  key: GIT_TOKEN
           volumeMounts:
             - name: data
               mountPath: /home/cerbero/.openclaw
