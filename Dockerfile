@@ -29,7 +29,7 @@
 # LICOES-APRENDIDAS.md, feedback_openclaw_version_skew na memoria do
 # Claude Code). Pra atualizar de novo no futuro, trocar o numero aqui
 # deliberadamente, nao voltar pra "latest".
-FROM ghcr.io/openclaw/openclaw:2026.9.4
+FROM ghcr.io/openclaw/openclaw:2026.9.5
 
 USER root
 
