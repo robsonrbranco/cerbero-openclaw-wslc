@@ -2335,3 +2335,140 @@ sinal de que o caminho é viável.
   [#100173](https://github.com/openclaw/openclaw/issues/100173),
   [#101250](https://github.com/openclaw/openclaw/issues/101250) — bug
   upstream "reply session initialization conflicted".
+
+## 50. Upgrade pra OpenClaw 2026.9.5 — schema 21 deixa sessões indisponíveis até rodar `doctor --fix`, e o `--fix` não roda com o gateway vivo (21/09/2026)
+
+Mesmo processo dos itens 31/41 (bump da tag no `Dockerfile`, commit,
+push, CI builda/deploya sozinho). Changelog inteiro conferido antes
+(`docs.openclaw.ai/releases/2026.9.5`, 11.469 linhas) atrás de
+breaking changes: a única depreciação era API síncrona de storage de
+plugin, que não usamos. Passou batido um aviso que estava lá, na
+seção "Prepare for the session database upgrade" — **este release
+sobe os bancos de agente pra schema 21, que builds antigas não abrem,
+e pede backup verificado antes**.
+
+**O sintoma não é o crash-e-reinicia do item 41.** Depois do rollout o
+pod ficou `3/3 Running`, mas o log mostrou:
+
+```
+[state-migrations] Startup migration warnings; continuing with degraded state.
+- OpenClaw agent database .../openclaw-agent.sqlite uses schema version 19;
+  stop active agents and run openclaw doctor --fix to migrate session
+  identities before using it. Sessions remain unavailable.
+```
+
+Ou seja: o gateway sobe, a Control UI conecta, mas **as sessões dos
+agentes ficam inacessíveis** até alguém rodar o reparo — e reiniciar
+sozinho não resolve (o próprio changelog avisa: "Restarting alone no
+longer completes these conversions").
+
+**Antes de tocar em produção, dois cuidados que valeram a pena:**
+
+1. `openclaw doctor --session-sqlite inspect --session-sqlite-all-agents
+   --json` (somente leitura) confirmou `integrityCheck: "ok"` nos dois
+   bancos, zero `issues`, `walSizeBytes: 0` — é migração de schema
+   limpa, não corrupção. Rodar isso primeiro descarta o cenário mais
+   caro (dado danificado) antes de decidir o resto.
+2. O backup diário do restic (`backup-cerbero`, 3h15 UTC) já cobria
+   uma janela anterior ao deploy — a rede de segurança que o
+   changelog pede já existia, sem precisar disparar nada manual.
+
+**`openclaw doctor --fix` recusou rodar dentro do próprio pod, com o
+gateway no ar:**
+
+```
+StateDatabaseCoordinatorContentionError: another OpenClaw process owns
+gateway-lifecycle. Stop the Gateway service and other OpenClaw processes
+using this state, then run openclaw doctor --fix from an independent shell.
+```
+
+Faz sentido: o `--fix` precisa de posse exclusiva do diretório de
+estado, e o processo do gateway já a segura. Dentro de um container
+Docker/k8s não existe "parar o serviço e manter o shell" — o processo
+principal É o container.
+
+**A saída, com um pod efêmero apontando pro mesmo PVC:**
+
+```bash
+kubectl -n olympus scale deployment cerbero --replicas=0
+kubectl -n olympus wait --for=delete pod -l app=cerbero --timeout=90s
+
+kubectl -n olympus apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cerbero-doctor-fix
+  namespace: olympus
+spec:
+  restartPolicy: Never
+  imagePullSecrets: [{name: ghcr-pull-secret}]
+  containers:
+    - name: doctor
+      image: ghcr.io/robsonrbranco/cerbero-gateway:latest
+      command: ["openclaw", "doctor", "--fix", "--non-interactive"]
+      envFrom:
+        - configMapRef: {name: cerbero-config}
+        - secretRef: {name: cerbero-env}
+      volumeMounts:
+        - {name: data, mountPath: /home/cerbero/.openclaw}
+        - {name: secrets, mountPath: /home/cerbero/.config/openclaw}
+  volumes:
+    - {name: data, persistentVolumeClaim: {claimName: cerbero-data}}
+    - {name: secrets, persistentVolumeClaim: {claimName: cerbero-secrets}}
+EOF
+# esperar phase=Succeeded, ler o log, kubectl delete pod cerbero-doctor-fix
+kubectl -n olympus scale deployment cerbero --replicas=1
+```
+
+`ReadWriteOnce` nas duas PVCs (`cerbero-data`, `cerbero-secrets`) é
+justamente o que torna isso seguro: com o Deployment em `replicas=0`
+não existe segundo consumidor disputando o volume, então o pod efêmero
+tem posse exclusiva de verdade — não é gambiarra, é o próprio padrão
+que o k8s oferece pra manutenção com estado.
+
+**Resultado do `--fix`**: `Session SQLite - Legacy entries: 1298; SQLite
+entries: 1317. Transcript events: imported=20799`. Religado, o log
+confirmou o serviço saudável: `[whatsapp] Listening for WhatsApp
+inbound messages`, `sessions.list` respondendo, zero restarts em 2 min
+de observação.
+
+**Um aviso que apareceu e não era problema**: `[diagnostics/memory]
+memory pressure: level=warning ... rss=1.16 GiB threshold=1 GiB` logo
+após o religamento. É um teto **interno do próprio OpenClaw**
+(diagnóstico novo desta versão), não o limite do container — o `limits.memory`
+do pod continua em 2Gi, e o RSS real (`kubectl top pod`) já estava
+caindo um minuto depois (951Mi → 906Mi). Picos assim são esperados no
+reconnect da Control UI depois de um restart (rajada de `sessions.list`,
+`plugins.list`, `cron.list` de uma vez); só valeria investigar se
+persistisse.
+
+**Achados do `doctor --fix` que ficaram registrados mas NÃO foram
+mexidos**, por serem pendências antigas e fora do escopo de "atualizar
+a versão": nenhum `commands.ownerAllowFrom` configurado (ninguém é
+"dono" formal pra aprovar updates/comandos via chat); `gateway.auth.token`
+em texto plano no `openclaw.json` (deveria migrar pra SecretRef);
+nenhum backup nativo do OpenClaw configurado (`openclaw backup create`
+é mecanismo diferente do restic do cluster); Browser Relay em modo
+legado. Cada um é uma decisão própria, não side-effect de upgrade.
+
+**Why:** a diferença entre este caso e o item 41 é a diferença entre
+"o software se recupera sozinho" e "o software para de propósito e
+pede uma ação humana explícita" — e as duas parecem a mesma coisa
+("upgrade, depois logs estranhos") até se ler a mensagem inteira. A
+migração de schema major (aqui: 19→21) é tratada como fato demais pra
+arriscar em segundo plano; o preço é que alguém tem que rodar o
+reparo, e rodar com o serviço no ar é bloqueado por desenho — o mesmo
+tipo de proteção contra corrida que a barreira de segurança do
+`/manager` do Themis/Hestia usa, por um caminho diferente (posse de
+processo em vez de isolamento de rede).
+
+**How to apply:** antes de qualquer bump de versão do OpenClaw, ler o
+changelog completo (não só o resumo do topo) atrás da palavra
+"schema" — é o sinal de que pode haver este exato padrão. Depois do
+deploy, checar o log por `degraded state` ou `Sessions remain
+unavailable` além do padrão `Restart Count`. Se aparecer: `doctor
+--session-sqlite inspect` primeiro (não mexe em nada), confirmar
+backup recente, depois `scale --replicas=0` + pod efêmero + `doctor
+--fix --non-interactive` + `scale --replicas=1`. Nunca tentar `doctor
+--fix` via `kubectl exec` no pod vivo — a contenção de lock é
+esperada, não bug.
