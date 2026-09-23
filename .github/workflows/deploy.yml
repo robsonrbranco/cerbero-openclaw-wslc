@@ -8,6 +8,10 @@ on:
       # Roda no Cloud Run (us-east1), fora da imagem do Cerbero -- mexer
       # nesse diretorio nao deve rebuildar nem reiniciar o gateway.
       - "weathernext-job/**"
+      # Copia de referencia: o arquivo que o agente usa vive no volume do pod
+      # (/home/cerbero/.openclaw/workspace), nao na imagem -- nao ha COPY dele
+      # no Dockerfile. Rebuildar por causa dele reiniciaria o gateway a toa.
+      - "scripts/get_weathernext.mjs"
   workflow_dispatch: {}
 
 permissions:

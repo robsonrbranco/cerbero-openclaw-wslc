@@ -2472,3 +2472,46 @@ backup recente, depois `scale --replicas=0` + pod efêmero + `doctor
 --fix --non-interactive` + `scale --replicas=1`. Nunca tentar `doctor
 --fix` via `kubectl exec` no pod vivo — a contenção de lock é
 esperada, não bug.
+
+## 51. `get_weathernext.mjs`: a subconsulta `MAX(init_time)` custava ~US$ 973 por chamada — trocada por duas consultas e teto de faturamento (23/09/2026)
+
+O item 49 já apontava o padrão caro (`WHERE init_time = (SELECT MAX(init_time)
+FROM tabela)`) e a correção ficou pendente. Remedido por dry-run em 23/09, a
+conta **piorou com o crescimento da tabela**: de ~64,8 TiB para **~156 TiB,
+cerca de US$ 973 por chamada**. Nenhum cron chamava o script, mas ele fica no
+workspace do Cerbero, onde o agente pode usá-lo se alguém pedir previsão.
+
+**Por que é tão caro:** a tabela é uma VIEW do dataset vinculado (Analytics
+Hub), e o BigQuery só poda partição por valor que conhece ANTES de ler. Um
+`MAX` sem filtro obriga a ler a coluna inteira para descobrir o valor.
+
+| consulta | bytes | custo |
+|---|---|---|
+| `init_time = (SELECT MAX(init_time) FROM t)` | ~156 TiB | ~US$ 973 |
+| `SELECT MAX(init_time) ... WHERE init_time >= agora - 2 dias` | ~2 GiB | ~US$ 0,01 |
+| `init_time = TIMESTAMP('...')` literal | ~300 GiB | ~US$ 1,83 |
+
+**A correção são duas consultas:** descobre o init mais recente olhando só a
+janela de 2 dias, e consulta com ele como literal. Custo total por chamada:
+~US$ 1,84.
+
+**E o que impede o problema de voltar:** toda consulta agora leva
+`maximumBytesBilled` (10 GiB na descoberta, 500 GiB na principal), e
+`runQuery` recusa rodar sem teto. Conferido na prática: a consulta antiga de
+~156 TiB, enviada com teto de 500 GiB, voltou `bytesBilledLimitExceeded` **sem
+cobrança** — o BigQuery compara a estimativa com o teto antes de executar.
+
+Validado no pod com a credencial real: `--dry-run` achou o init
+`2026-09-23 11:00 UTC` e estimou 300 GiB. O script antigo ficou no pod como
+`get_weathernext.mjs.antes-teto-20260923`. E `scripts/get_weathernext.mjs`
+entrou no `paths-ignore` do deploy: é cópia de referência, não vai para a
+imagem, e editá-lo não deve rebuildar nem reiniciar o gateway.
+
+**Why:** um padrão de consulta "óbvio" (`= (SELECT MAX(...))`) é barato num
+banco com índice e catastrófico num data warehouse que cobra por byte lido — e
+o custo cresce sozinho com a tabela, sem ninguém mexer no código.
+
+**How to apply:** toda consulta ao BigQuery neste projeto leva
+`maximumBytesBilled`; nenhuma usa `MAX`/`MIN` sem filtro na coluna de
+partição; e qualquer consulta nova passa por dry-run antes de ir para um
+script que o agente possa chamar.
