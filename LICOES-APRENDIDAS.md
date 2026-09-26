@@ -2515,3 +2515,65 @@ o custo cresce sozinho com a tabela, sem ninguém mexer no código.
 `maximumBytesBilled`; nenhuma usa `MAX`/`MIN` sem filtro na coluna de
 partição; e qualquer consulta nova passa por dry-run antes de ir para um
 script que o agente possa chamar.
+
+## 52. Mesma notificação 38 vezes no WhatsApp: heartbeat marcado como falha não consome o aviso de término de comando — bug do OpenClaw 2026.9.5 (25/09/2026)
+
+**Sintoma:** o Cerbero mandou ao Robson, uma vez por hora, a mesma mensagem
+sobre dois comandos em segundo plano (`tidy-har`, `ember-co`) — "é a
+trigésima oitava cópia idêntica". O próprio agente diagnosticou o loop e
+sugeriu `tools.exec.notifyOnExit=false`, sem aplicar.
+
+**A causa não era o agente, e não era descompasso de versão.** No log do
+gateway (`/tmp/openclaw/openclaw-AAAA-MM-DD.log`), todo envio que parte de
+cron ou de heartbeat falhava na **primeira** tentativa:
+
+```
+heartbeat failed: No active WhatsApp Web listener (account: default) ... | OPENCLAW_PLATFORM_MESSAGE_NOT_DISPATCHED
+```
+
+com o canal `connected, health:healthy` o tempo todo. A fila de reenvio
+(`Outbound delivery retry: drained`) entregava segundos a minutos depois — por
+isso as mensagens **chegavam**. É o bug upstream
+[openclaw/openclaw#153453](https://github.com/openclaw/openclaw/issues/153453):
+a resposta sai por um registro de canal diferente do que está conectado.
+Correção proposta na [PR #153460](https://github.com/openclaw/openclaw/pull/153460),
+ainda aberta; a 2026.9.6 não a traz. O plugin `whatsapp` 2026.9.4 é o mais novo
+no ClawHub (`plugins update --dry-run` confirmou), e `plugins doctor` passa.
+
+**Como o bug vira loop:**
+
+1. comando em segundo plano termina → `notifyOnExit` enfileira o turno
+   `[OpenClaw exec completion]` e pede heartbeat;
+2. o heartbeat roda, o agente responde, o envio direto falha;
+3. o heartbeat fica registrado como **falha** (`openclaw system heartbeat last`
+   → `status: failed`, com a prévia da mensagem em loop) — e o aviso **não é
+   dado como consumido**;
+4. o próximo heartbeat reinjeta o mesmo turno. Com o backoff de erro, uma vez
+   por hora.
+
+**O que foi feito:**
+
+- `openclaw config set tools.exec.notifyOnExit false` (valida o esquema e
+  aplica sem restart). Backup: `openclaw.json.antes-de-notifyOnExit-20260925`.
+- **Não bastou sozinho:** o aviso que já estava na fila voltou mais uma vez às
+  00:09 UTC. Ela fica **em memória** — procurado no SQLite do OpenClaw
+  (`state/openclaw.sqlite`, `agents/main/agent/openclaw-agent.sqlite`), o
+  `tidy-har` só aparece no histórico da conversa, nunca numa fila. O
+  `rollout restart` do pod esvaziou; o heartbeat seguinte rodou `skipped`
+  (`HEARTBEAT.md` vazio) e nenhum turno de término entrou mais.
+
+**O que continua até a correção:** crons com `announce` saem como
+`ok (not delivered)` e chegam atrasados — o `daily-briefing` de 25/09 chegou
+às 09:13 BRT em vez de 09:00. Um relato na issue fala em entregas duplicadas.
+
+**Why:** "mensagem repetida" parecia defeito do agente ou do canal, e o
+remédio óbvio (o que o próprio agente sugeriu) só desligava o sintoma. A causa
+estava no caminho de entrega do core, visível só no log do gateway — e o
+remédio parcial ainda deixava o aviso preso em memória.
+
+**How to apply:** quando o Cerbero repetir mensagem ou um cron sair
+`not delivered`, procurar `NOT_DISPATCHED` / `No active WhatsApp Web listener`
+no log do gateway antes de mexer em configuração. Ao atualizar o OpenClaw,
+conferir se a #153460 (ou outra correção da #153453) entrou; se sim, confirmar
+que o log parou de mostrar `NOT_DISPATCHED` e religar com
+`openclaw config set tools.exec.notifyOnExit true`.
