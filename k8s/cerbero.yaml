@@ -19,7 +19,14 @@ data:
   GOG_HOME: "/home/cerbero/.openclaw/state/gogcli"
   GOG_KEYRING_BACKEND: "file"
   # Sessao/chaves e indice SQLite do wacli ficam no PVC, nunca na imagem.
+  # Um store por numero, cada um com seu lock e seu sidecar de sync:
+  #   WACLI_STORE_DIR          -> numero do Branco (sidecar wacli-sync-branco).
+  #                               Nome e pasta mantidos: wacli-sampaio e
+  #                               wacli-base leem por esta variavel.
+  #   WACLI_STORE_DIR_CERBERO  -> numero dedicado do Cerbero, +55 21 97102-2207
+  #                               (sidecar wacli-sync-cerbero, 29/09/2026).
   WACLI_STORE_DIR: "/home/cerbero/.openclaw/state/wacli"
+  WACLI_STORE_DIR_CERBERO: "/home/cerbero/.openclaw/state/wacli-cerbero"
   PATH: "/home/cerbero/.openclaw/extensions:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   # O openclaw.json migrado foi escrito pela versao 2026.7.1, mas a imagem
   # ghcr.io/openclaw/openclaw:latest publicada ainda esta na 2026.6.34 (mesmo
@@ -159,10 +166,24 @@ spec:
             limits:
               cpu: 1000m
               memory: 2Gi
-        # Segundo dispositivo vinculado ao WhatsApp, isolado do plugin usado
-        # pelo gateway. Antes do primeiro QR code o loop apenas aguarda; uma
-        # falha de autenticacao/sync nunca derruba o container principal.
-        - name: wacli-sync
+        # Um sidecar de sync por numero, no MESMO formato (29/09/2026): o
+        # `wacli sync --follow` cuida de um store so, e cada store tem o seu
+        # lock -- dois numeros sao dois processos. Container proprio para
+        # cada um porque cai e volta sozinho e tem log separado
+        # (`logs -c wacli-sync-branco` / `-c wacli-sync-cerbero`).
+        #
+        # Os dois esperam o pareamento em vez de falhar: sem session.db o
+        # laco dorme e tenta de novo, e nada derruba o container principal.
+        #
+        # --presence-mode quiet: em `normal`, o padrao, a sincronizacao
+        #   EMITE PRESENCA -- os contatos veem o numero "online" sem ninguem
+        #   ali. Espelho nao deve aparecer do outro lado.
+        # --max-db-size: ao chegar no teto o sync PARA (nao apaga nada). E o
+        #   que impede o espelho de encher o disco do node sem aviso. O teto
+        #   e por volume: o do Branco tinha 267 MB em 29/09 (~5 MB/dia desde
+        #   agosto), por isso 2GB; o do Cerbero comeca vazio, 500MB. Quando
+        #   um parar, `wacli doctor` mostra, e o conserto e subir o teto.
+        - name: wacli-sync-branco
           image: ghcr.io/robsonrbranco/cerbero-gateway:latest
           envFrom:
             - configMapRef:
@@ -174,12 +195,40 @@ spec:
               set -u
               while true; do
                 if [ ! -f "${WACLI_STORE_DIR}/session.db" ]; then
-                  echo "wacli ainda nao pareado; aguardando session.db..."
+                  echo "wacli (numero do Branco) ainda nao pareado; aguardando session.db..."
                   sleep 60
                   continue
                 fi
-                echo "Iniciando sincronizacao wacli (se ainda nao pareado, aguardara novo ciclo)..."
-                wacli sync --follow || true
+                wacli --store "${WACLI_STORE_DIR}" sync --follow --max-db-size 2GB --presence-mode quiet || true
+                sleep 60
+              done
+          volumeMounts:
+            - name: data
+              mountPath: /home/cerbero/.openclaw
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+        - name: wacli-sync-cerbero
+          image: ghcr.io/robsonrbranco/cerbero-gateway:latest
+          envFrom:
+            - configMapRef:
+                name: cerbero-config
+          command:
+            - sh
+            - -c
+            - |
+              set -u
+              while true; do
+                if [ ! -f "${WACLI_STORE_DIR_CERBERO}/session.db" ]; then
+                  echo "wacli (numero do Cerbero) ainda nao pareado; aguardando session.db..."
+                  sleep 60
+                  continue
+                fi
+                wacli --store "${WACLI_STORE_DIR_CERBERO}" sync --follow --max-db-size 500MB --presence-mode quiet || true
                 sleep 60
               done
           volumeMounts:
