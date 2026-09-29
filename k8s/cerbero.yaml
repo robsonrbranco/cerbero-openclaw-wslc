@@ -21,11 +21,15 @@ data:
   # Sessao/chaves e indice SQLite do wacli ficam no PVC, nunca na imagem.
   # Um store por numero, cada um com seu lock e seu sidecar de sync:
   #   WACLI_STORE_DIR          -> numero do Branco (sidecar wacli-sync-branco).
-  #                               Nome e pasta mantidos: wacli-sampaio e
-  #                               wacli-base leem por esta variavel.
+  #                               O nome da VARIAVEL fica: wacli-sampaio e
+  #                               wacli-base leem por ela. A pasta era
+  #                               state/wacli ate 29/09/2026 e foi renomeada
+  #                               para o padrao wacli-<dono>; ficou um link
+  #                               simbolico state/wacli -> wacli-branco
+  #                               durante a transicao.
   #   WACLI_STORE_DIR_CERBERO  -> numero dedicado do Cerbero, +55 21 97102-2207
   #                               (sidecar wacli-sync-cerbero, 29/09/2026).
-  WACLI_STORE_DIR: "/home/cerbero/.openclaw/state/wacli"
+  WACLI_STORE_DIR: "/home/cerbero/.openclaw/state/wacli-branco"
   WACLI_STORE_DIR_CERBERO: "/home/cerbero/.openclaw/state/wacli-cerbero"
   PATH: "/home/cerbero/.openclaw/extensions:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   # O openclaw.json migrado foi escrito pela versao 2026.7.1, mas a imagem

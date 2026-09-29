@@ -6,7 +6,7 @@
 # local (WACLI_READONLY=1).
 set -eu
 
-: "${WACLI_STORE_DIR:=/home/cerbero/.openclaw/state/wacli}"
+: "${WACLI_STORE_DIR:=/home/cerbero/.openclaw/state/wacli-branco}"
 export WACLI_STORE_DIR WACLI_READONLY=1
 
 # JID confirmado em 11/08/2026 via `wacli groups list`.

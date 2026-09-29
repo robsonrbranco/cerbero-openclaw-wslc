@@ -3,7 +3,7 @@
 O `wacli` roda como um segundo dispositivo vinculado, separado do plugin
 WhatsApp do gateway. A imagem fixa a versao e valida o SHA-256 do artefato; o
 sidecar grava sessao e indice em
-`/home/cerbero/.openclaw/state/wacli`, dentro do PVC `cerbero-data`.
+`/home/cerbero/.openclaw/state/wacli-<dono>` (uma pasta por número), dentro do PVC `cerbero-data`.
 
 ## Publicar e aplicar
 
@@ -43,13 +43,16 @@ envia mensagens, nao marca mensagens como lidas e nao altera o grupo.
 
 | Número | Store | Sidecar | Teto |
 |---|---|---|---|
-| Branco (+55 21 99525-6856) | `state/wacli` (`WACLI_STORE_DIR`) | `wacli-sync-branco` | 2GB |
+| Branco (+55 21 99525-6856) | `state/wacli-branco` (`WACLI_STORE_DIR`) | `wacli-sync-branco` | 2GB |
 | Cerbero, dedicado (+55 21 97102-2207) | `state/wacli-cerbero` (`WACLI_STORE_DIR_CERBERO`) | `wacli-sync-cerbero` | 500MB |
 
 O `wacli sync --follow` cuida de **um store só**, e cada store tem o seu lock:
 dois números são dois processos, e cada um tem container próprio, que cai e
-volta sozinho e tem log separado. O store do Branco manteve pasta e variável
-porque `wacli-sampaio` e `wacli-base` leem por `WACLI_STORE_DIR`.
+volta sozinho e tem log separado. O store do Branco manteve a variável
+(`wacli-sampaio` e `wacli-base` leem por `WACLI_STORE_DIR`), e a pasta foi
+renomeada de `state/wacli` para `state/wacli-branco` em 29/09/2026, para o
+padrão `wacli-<dono>` — com um link simbólico `state/wacli -> wacli-branco`
+na transição.
 
 **Os dois rodam com `--presence-mode quiet`** — em `normal`, a sincronização
 emite presença e os contatos veem o número "online" sem ninguém ali. **E com
