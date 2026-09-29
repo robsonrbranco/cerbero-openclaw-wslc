@@ -2577,3 +2577,70 @@ no log do gateway antes de mexer em configuração. Ao atualizar o OpenClaw,
 conferir se a #153460 (ou outra correção da #153453) entrou; se sim, confirmar
 que o log parou de mostrar `NOT_DISPATCHED` e religar com
 `openclaw config set tools.exec.notifyOnExit true`.
+
+## 53. Upgrade pra OpenClaw 2026.9.6 — a migração que é automática no Calímaco perde a trava no Cerbero, e o `doctor --fix` recusa se a trava do processo morto ainda não venceu (29/09/2026)
+
+**O changelog avisava** ("Compact saved history and memory storage"): a
+2026.9.6 leva o banco do agente ao **schema 23** e o compartilhado ao
+**18**, a 2026.9.5 recusa o banco convertido, e a migração pede writers
+parados e cópia verificada. Diferente da 2026.9.5 (item 50), ela **tenta
+migrar sozinha na subida**, confere integridade e salva cópias próprias
+(`*.pre-startup-migration-*.bak`).
+
+**No Calímaco (Acanthus, banco de agente de 24 MB) isso bastou:** subiu,
+migrou, zero restarts. **No Cerbero (357 MB) não:**
+
+```
+Gateway failed to start: SQLite database cannot be snapshotted safely: .../openclaw-agent.sqlite.
+OpenClaw startup migration lease was lost before startup migrations completed | gateway.maintenance_required
+```
+
+O banco compartilhado chegou ao 18, os de agente ficaram no 21, e o
+container entrou em ciclo de restart. Suspeita (não provada): a etapa
+`media-persistence-detection` segura o banco por segundos
+(`slow SQLite transaction hold ... elapsedMs=4721`) e a trava de
+migração vence no meio — agravado pelo `node-host`, segundo processo
+OpenClaw no mesmo volume, que o Calímaco não tem.
+
+**O conserto foi o do item 50** — `replicas=0` + pod efêmero com a imagem
+nova rodando `openclaw doctor --fix --non-interactive` —, **com uma
+armadilha nova:** a primeira tentativa do `doctor` recusou:
+
+```
+Agent database maintenance deferred: agent database maintenance lease
+core:agent-database-maintenance/global is held by fb865e51-...
+```
+
+As travas moram em `state/openclaw.sqlite`, tabela `state_leases`, com
+`expires_at` = último heartbeat + 60 s. O dono era o gateway que acabara
+de cair: o `doctor` rodou **segundos antes** de a trava vencer. Lida a
+tabela (só leitura) e confirmado que `expires_at` já tinha passado,
+o segundo `doctor --fix` migrou os dois bancos (`v21 -> v23`) e
+terminou `Doctor complete`. Na religada, a primeira subida ainda perdeu a
+trava uma vez (código 78) e a segunda subiu limpa — daí em diante, zero
+pendência no `doctor --session-sqlite inspect`.
+
+**Duas surpresas do procedimento, não do OpenClaw:**
+
+- **O CI religa o pod.** O deploy faz `kubectl apply -f k8s/cerbero.yaml`,
+  que declara `replicas: 1` — escalar a 0 antes do push **não segura**
+  o pod parado durante o build. Por isso a ordem que funcionou foi:
+  parar só para a cópia, religar na versão velha, e deixar o `Recreate`
+  do rollout cumprir o "writers parados".
+- **A cópia feita antes vale mais que a do OpenClaw.** Ficou em
+  `backups/pre-2026.9.6-20260929T225151Z` no volume (10 bancos,
+  `integrity_check` ok), feita com o pod parado e verificada — a única
+  que garante volta para a 2026.9.5.
+
+**Why:** migração automática não é garantia de migração: o mesmo release
+se comportou diferente em dois pods, e o que decidiu foi o tamanho do
+banco e quem mais escreve no volume. E uma trava de processo morto
+parece bloqueio permanente até se ler `expires_at`.
+
+**How to apply:** antes de subir versão com mudança de schema, fazer a
+cópia verificada com o pod parado. Se o gateway sair com
+`maintenance_required`: `replicas=0`, **ler `state_leases` e esperar o
+`expires_at` passar**, e só então o pod efêmero com `doctor --fix`.
+Nunca apagar linha de `state_leases` à mão — esperar os 60 s resolve.
+As cópias `backups/pre-2026.9.6-*` e os `*.pre-startup-migration-*.bak`
+podem sair depois de alguns dias estáveis (o disco do node estava em 84%).
