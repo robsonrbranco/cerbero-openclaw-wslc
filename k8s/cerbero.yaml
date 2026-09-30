@@ -167,9 +167,16 @@ spec:
             requests:
               cpu: 100m
               memory: 512Mi
+            # 3Gi desde 30/09/2026 (era 2Gi): na 2026.9.6 o historico fica
+            # comprimido e reler a sessao principal custa mais memoria. Uma
+            # consolidacao de timesheet interrompida era retomada a cada
+            # subida (main-session-restart-recovery), passava de 1,9 GB em
+            # ~2,5 min e o container morria por OOM -- ciclo sem fim. Com 3Gi
+            # a retomada terminou (pico 1,34 GB) e o uso assentou em ~1 GB.
+            # Ver LICOES-APRENDIDAS.md item 54.
             limits:
               cpu: 1000m
-              memory: 2Gi
+              memory: 3Gi
         # Um sidecar de sync por numero, no MESMO formato (29/09/2026): o
         # `wacli sync --follow` cuida de um store so, e cada store tem o seu
         # lock -- dois numeros sao dois processos. Container proprio para
