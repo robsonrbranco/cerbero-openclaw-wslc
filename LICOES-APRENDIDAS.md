@@ -2644,3 +2644,44 @@ cópia verificada com o pod parado. Se o gateway sair com
 Nunca apagar linha de `state_leases` à mão — esperar os 60 s resolve.
 As cópias `backups/pre-2026.9.6-*` e os `*.pre-startup-migration-*.bak`
 podem sair depois de alguns dias estáveis (o disco do node estava em 84%).
+
+## 54. Ciclo de OOM depois da 2026.9.6: o gateway retoma a execução interrompida a cada subida, e ela nunca cabe nos 2Gi (30/09/2026)
+
+**Sintoma**, achado num check-up pedido pelo Branco: `cerbero` em
+`OOMKilled` (137) a cada ~3 min (20:33, 20:36, 20:39 UTC…). Os outros três
+containers do pod, estáveis. No `dmesg`: `Memory cgroup out of memory:
+Killed process … (V8Worker) anon-rss:1977896kB`.
+
+**O mecanismo:** a cada subida o gateway loga
+`[main-session-restart-recovery] started interrupted main session:
+agent:main:main` — ele **retoma o turno que a morte anterior interrompeu**.
+O turno era uma consolidação de timesheet (44 comandos) na sessão
+principal, e a retomada relê o histórico inteiro dela; na 2026.9.6 o
+histórico fica comprimido e reler custa mais memória e CPU (o changelog
+avisa). Memória de 300 MB a 1,9 GB em ~2,5 min, CPU no teto de 1 core,
+OOM no limite de 2Gi — e a subida seguinte retoma o mesmo turno. **Ciclo
+que não termina sozinho.** Na Control UI aparece como uma fila de avisos
+"Sistema · Recuperação após reinicialização".
+
+**O conserto foi só memória:** `kubectl patch` do limite do container
+`cerbero` para **3Gi** (o node tinha ~3 GB livres). A retomada terminou
+("Consolidação fechada") com pico de 1,34 GB, e o uso assentou em ~1 GB,
+CPU entre 20 e 60m, zero restarts. O manifesto foi alinhado depois com
+`[skip ci]`, para o próximo deploy não voltar aos 2Gi.
+
+**Se 3Gi não bastasse**, a saída seguinte era arquivar a sessão principal
+(`openclaw sessions archive`) — a retomada deixa de ter o que carregar,
+mas o Cerbero perde o contexto imediato da conversa. É decisão do Branco,
+não reparo técnico.
+
+**Why:** um OOM isolado vira ciclo porque a recuperação pós-restart
+refaz exatamente o trabalho que causou o OOM. Quem olha só `restarts: 4`
+acha que é instabilidade; o que diz o que está acontecendo é a linha do
+`main-session-restart-recovery` no começo de cada subida.
+
+**How to apply:** restart com `OOMKilled` no `cerbero` → ler o log da
+subida atual atrás de `restart-recovery`; se estiver retomando turno
+interrompido, dar memória para ele terminar em vez de reiniciar de novo
+(`kubectl patch`, e depois o manifesto). Acompanhar com
+`kubectl top pod --containers` até a CPU cair — é o sinal de que o turno
+retomado acabou.
