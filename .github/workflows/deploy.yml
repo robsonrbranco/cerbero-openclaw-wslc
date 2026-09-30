@@ -2,7 +2,7 @@ name: deploy
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
     paths-ignore:
       - "**.md"
       # Roda no Cloud Run (us-east1), fora da imagem do Cerbero -- mexer
