@@ -2685,3 +2685,51 @@ interrompido, dar memória para ele terminar em vez de reiniciar de novo
 (`kubectl patch`, e depois o manifesto). Acompanhar com
 `kubectl top pod --containers` até a CPU cair — é o sinal de que o turno
 retomado acabou.
+
+## 55. Upgrade pra OpenClaw 2026.9.8 — migração v23 -> v24 perde a trava duas vezes e a terceira subida passa sozinha; entrypoint sem reparo e CI que religa o pod (06/10/2026)
+
+**Preparo (a partir do roteiro do Calímaco, conferido contra o Cerbero):**
+o changelog da 2026.9.7 (770 KB; a 9.8 tem 11 KB) pede `openclaw doctor --fix`
+antes de iniciar quando o container não tem reparo automático. O
+`docker-entrypoint.sh` da imagem tem 11 linhas e só repassa o comando, sem
+`doctor`; então o Cerbero é "entrypoint sem reparo". Não afetavam: Tasks/
+TaskFlow (`openclaw tasks audit` = 0), `tool_search_code`, webhooks de
+Telegram/Feishu/Teams, `allowBots`, `REPLY_SKIP`/`ANNOUNCE_SKIP`. O namespace
+`olympus` NÃO tem Pod Security (o `restricted` do Acanthus não vale aqui).
+
+**Ordem que funcionou (dois PRs):**
+1. PR de memória (3Gi -> 4Gi): o container já rodava a ~2750Mi com 1 OOM.
+2. Cópia verificada com o pod parado: `replicas=0`, pod efêmero
+   (`alpine/git` + `apk add rsync sqlite`, root, monta `cerbero-data`) com
+   `rsync -aHAX --exclude=/backups` para `backups/pre-2026.9.8-<UTC>` DENTRO
+   do volume. A imagem do Cerbero não tem `rsync` nem `sqlite3`. Checksum com
+   `rsync -c -n` saiu vazio, 49.793 arquivos dos dois lados, `integrity_check`
+   ok em 19 bancos, 1,7 GB. Religado em seguida na versão velha (parado ~2 min).
+3. PR da troca (`FROM ...:2026.9.8`), com o merge disparando o deploy do CI.
+
+**O que aconteceu na subida:** o deploy trocou a imagem e o container
+`cerbero` caiu **duas vezes** (Exit 1, "Doctor could not complete
+maintenance") antes de subir limpo na terceira — o mesmo padrão de trava
+perdida do item 53, mas desta vez **não precisou** do pod efêmero com
+`doctor --fix`. Foram salvos 3 `.pre-startup-migration-*.bak`, o banco do
+agente foi de v23 para v24, e o `openclaw doctor --session-sqlite inspect`
+deu 0 problemas. Indisponibilidade do WhatsApp: ~5 min. Memória: pico ~1,8 Gi,
+assentou ~1,6 Gi, sem OOM com os 4Gi.
+
+**Estado verificado depois:** `OpenClaw 2026.9.8`, 4/4 containers, os dois
+WhatsApp conectados, 16 crons listados. `openclaw system heartbeat last`
+retornou `null` logo após a subida (o heartbeat `main` segue `skipped`, como
+antes). Não foi acompanhado o dia seguinte.
+
+**Why:** o roteiro do Calímaco não valia no Cerbero em pelo menos três
+pontos — entrypoint sem reparo, `node-host` como segundo processo no volume e
+CI que religa o pod — e o que decidiu foi a ordem, não a versão.
+
+**How to apply:** repetir a ordem acima: memória primeiro, cópia com o pod
+parado, e só então o merge. Se o gateway sair com `maintenance_required`,
+valem as regras do item 53 (`replicas=0`, ler `state_leases` e esperar o
+`expires_at`, pod efêmero com `doctor --fix --non-interactive`, nunca apagar
+trava à mão). Cópia de rollback: `backups/pre-2026.9.8-20261006T145141Z`
+(feita ~14 min antes do merge; a 9.6 escreveu depois dela). Imagem de volta:
+`cerbero-gateway:8d94ef20447c8c61c4b7a07146d982591ebf0056`. As cópias
+`pre-2026.9.6-*` e os `.bak` só saem com OK do Branco.
