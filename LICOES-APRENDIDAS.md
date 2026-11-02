@@ -2796,6 +2796,15 @@ Gemini (`gemini-4-argon` é novo, de nível desconhecido) e `gpt-6-astra`.
   para o 6.1; `Claude Haiku 4.5` para o 5.5) e os custos do OpenAI herdaram os do
   5.6 (só afeta relatório). Os `*.patch.json5` antigos do volume citam os ids
   velhos: se algo os reaplicar, a troca desfaz.
+- **Google (02/11/2026, depois):** `google/gemini-3.1-pro-preview -> gemini-4-argon`
+  (4 substituições). É o único Google trocado: `gemini-3.8-flash` (fallback 2) e
+  `gemini-3.5-flash-lite` ficaram, porque o `argon` não tem "flash" nem "pro" no
+  nome e o nível dele é desconhecido (aceita texto, imagem e vídeo, ~1M de
+  contexto) — trocar o fallback por ele pode mudar custo e latência. Testado
+  direto (`openclaw infer model run`) e com `--gateway`, `ok`; hot reload sem
+  reiniciar; rollback `openclaw.json.antes-gemini4-20261102`. Dívidas: alias
+  continua `Gemini 3.1 Pro`, a entrada declara só texto+imagem (o modelo aceita
+  vídeo) e o custo é 0.
 - **Why:** os modelos são config de runtime no volume, então some em qualquer
   recriação do volume sem estar no repo.
 
