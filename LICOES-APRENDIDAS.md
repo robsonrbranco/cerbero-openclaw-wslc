@@ -2777,6 +2777,28 @@ cópia + ~8 min de download da imagem e migração.
 - Contagem de crons por status caiu de 15-16 para 13 depois da subida; não
   conferido (pode ser job que ainda não rodou).
 
+**Troca de modelos depois do upgrade (02/11/2026, mesma sessão).** O catálogo da
+10.9 trouxe versões novas; trocados no `openclaw.json` do volume (não no repo —
+o `cerbero.json5` está desatualizado e a config viva só existe no volume):
+`anthropic/claude-opus-5 -> opus-5-5`, `sonnet-5 -> sonnet-5-5`,
+`haiku-4-5 -> haiku-5-5`, `openai/gpt-5.6-sol -> gpt-6.1-sol`,
+`gpt-5.6-terra -> gpt-6.1-terra`, `gpt-5.6-luna -> gpt-6-luna` (não existe
+luna 6.1; é o fallback 1). 27 substituições (catálogo do provedor, `modelPolicy.allow`,
+entradas do agente `main`, fallback). Ficaram: `fable-5-1`, DeepSeek v4, os três
+Gemini (`gemini-4-argon` é novo, de nível desconhecido) e `gpt-6-astra`.
+- **Como testar cada modelo:** `openclaw infer model run --model <p/m> --prompt ... --json`
+  (direto no provedor) e depois com `--gateway` (já com a config nova). Os 6
+  responderam `ok`, status 200, `attempts: []`. `openclaw models status --probe` deu
+  erro genérico e não serve para isso.
+- **Config aplicada por hot reload**, sem reiniciar o pod; `openclaw config validate`
+  ok. Rollback: `openclaw.json.antes-modelos-20261102` no volume.
+- **Dívidas:** os aliases mantiveram o rótulo velho (`OpenAI GPT 5.6 Sol` aponta
+  para o 6.1; `Claude Haiku 4.5` para o 5.5) e os custos do OpenAI herdaram os do
+  5.6 (só afeta relatório). Os `*.patch.json5` antigos do volume citam os ids
+  velhos: se algo os reaplicar, a troca desfaz.
+- **Why:** os modelos são config de runtime no volume, então some em qualquer
+  recriação do volume sem estar no repo.
+
 **Why:** com versão que muda o schema, o que decide a volta é a cópia ser
 exata, e isso depende de a versão antiga não rodar entre a cópia e o merge.
 
