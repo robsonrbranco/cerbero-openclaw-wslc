@@ -2733,3 +2733,55 @@ trava à mão). Cópia de rollback: `backups/pre-2026.9.8-20261006T145141Z`
 (feita ~14 min antes do merge; a 9.6 escreveu depois dela). Imagem de volta:
 `cerbero-gateway:8d94ef20447c8c61c4b7a07146d982591ebf0056`. As cópias
 `pre-2026.9.6-*` e os `.bak` só saem com OK do Branco.
+
+## 56. Upgrade pra OpenClaw 2026.10.9 — subiu na primeira tentativa com o pod parado durante o merge; o CI "falha" só pelo tempo do pull da imagem (02/11/2026)
+
+**Escopo:** 2026.9.8 -> 2026.10.9 (9 versões, 10.1 a 10.9; 10.9 é release de
+segurança). Plugin `whatsapp` (instalado do ClawHub, `clawhub:@openclaw/whatsapp`)
+estava na 2026.9.4, quatro versões atrás do gateway. `deepseek` e `duckduckgo`
+já acompanhavam o core.
+
+**Do changelog (lido por busca de trechos; 10.5 e 10.6 NÃO foram lidos
+inteiros):** o schema do banco passa de 24 para 25 na 10.5 e voltar exige a
+cópia feita antes (restaurar perde o que veio depois); a 10.1 migra pelo Doctor
+credenciais do WhatsApp sem escopo (o texto não detalha); "raiz somente leitura
+precisa de cache gravável" não se aplica (o pod não tem `securityContext`).
+
+**Ordem que funcionou (dois PRs + plugin):**
+1. PR do `terminationGracePeriodSeconds` 30 -> 120 (resposta ao item 55: o
+   gateway morria sem liberar a trava `gateway-owner`). Mesclado antes.
+2. Cópia verificada COM O POD PARADO para `backups/pre-2026.10.9-<UTC>` (2,4 GB;
+   `rsync -c -n` vazio, 58.913 arquivos, `integrity_check` ok em 19 bancos), pelo
+   mesmo pod efêmero do item 55 (`alpine/git` + `apk add rsync sqlite`).
+3. **Mesclar o PR da troca de versão com o Deployment ainda em `replicas=0`.** O
+   `deploy.yml` faz `kubectl apply` (replicas: 1) DEPOIS de publicar `:latest`, então
+   o primeiro pod já sobe na imagem nova: a versão antiga não escreve depois da
+   cópia. (No item 55 a cópia ficou 14 min defasada porque religamos antes.)
+4. `openclaw plugins update whatsapp` (com `--dry-run` antes) depois que o
+   gateway novo ficou saudável: 2026.9.4 -> 2026.10.9, conta `cerbero` deu um 408
+   e voltou em ~1 min.
+
+**O que aconteceu:** pod 4/4, **0 reinícios**, banco migrado, sem "state
+ownership" no log, os 2 WhatsApp conectados, `session-sqlite inspect` com 0
+problemas, `wacli` autenticado. Memória ~2,5 Gi dos 4Gi. Fora do ar ~6 min de
+cópia + ~8 min de download da imagem e migração.
+
+**Surpresas, do procedimento e não do OpenClaw:**
+- **O CI deu `failure` e o deploy deu certo.** O `rollout status` tem
+  `--timeout=180s` e o node leva mais que isso baixando a imagem de 1,6 GB (o
+  mesmo aconteceu ao religar a imagem velha, que o containerd tinha limpado). O
+  pod estava em `PodInitializing`; não é falha de deploy. Se virar ruído, subir o
+  timeout do `rollout status` em PR separado.
+- **`ps` das imagens só mostra o nome do processo, sem argumentos**
+  (`ps -eo pid,comm`), o que quebrou a busca do PID do wacli por `'wacli --store'`.
+- Contagem de crons por status caiu de 15-16 para 13 depois da subida; não
+  conferido (pode ser job que ainda não rodou).
+
+**Why:** com versão que muda o schema, o que decide a volta é a cópia ser
+exata, e isso depende de a versão antiga não rodar entre a cópia e o merge.
+
+**How to apply:** repetir a ordem acima, em especial o passo 3. Cópia de
+rollback: `backups/pre-2026.10.9-20261102T174014Z`; imagem de volta:
+`cerbero-gateway:2c0840e3853ac4fba7734de35a6dae61ef0fc9cc` (2026.9.8) — mas com
+o schema em 25 o caminho de volta é a cópia, não a imagem. As cópias
+`pre-2026.9.8-*` e os `.pre-startup-migration-*.bak` só saem com OK do Branco.
