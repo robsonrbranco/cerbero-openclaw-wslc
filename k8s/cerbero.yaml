@@ -96,6 +96,12 @@ spec:
       labels:
         app: cerbero
     spec:
+      # 120 s desde 02/11/2026 (era o padrao, 30 s). Com 30 s o gateway morria sem
+      # liberar a trava `gateway-owner` (vale 300 s apos o ultimo heartbeat) e a
+      # subida seguinte dava "Another Gateway owner lease is still active" ate
+      # vencer, cerca de 5 min e 2 reinicios do container (10/10/2026, LICOES
+      # item 55). Mais tempo para encerrar limpo reduz essa espera.
+      terminationGracePeriodSeconds: 120
       initContainers:
         - name: sync-projects
           image: alpine/git:latest
